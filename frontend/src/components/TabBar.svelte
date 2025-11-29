@@ -15,13 +15,13 @@
 
   $: tabs = $tabStore.tabs;
 
-  function handleTabClick(tabId: string, event: MouseEvent) {
+  function handleTabClick(tabId: string, event: Event) {
     event.stopPropagation();
     tabStore.setActiveTab(tabId);
     closeContextMenu();
   }
 
-  function handleTabClose(tabId: string, event: MouseEvent) {
+  function handleTabClose(tabId: string, event: Event) {
     event.stopPropagation();
     tabStore.closeTab(tabId);
     closeContextMenu();
@@ -179,9 +179,21 @@
         on:dragleave={handleDragLeave}
         on:drop={(e) => handleDrop(index, e)}
         on:click={(e) => handleTabClick(tab.id, e)}
+        on:keydown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleTabClick(tab.id, e);
+          } else if (e.key === 'Delete' || e.key === 'Backspace') {
+            e.preventDefault();
+            handleTabClose(tab.id, e);
+          }
+        }}
         on:dblclick={(e) => handleTabDoubleClick(tab.id, e)}
         on:contextmenu={(e) => handleContextMenu(tab.id, e)}
         title={tab.name}
+        role="tab"
+        aria-selected={tab.isActive}
+        tabindex={tab.isActive ? 0 : -1}
       >
         <!-- 固定图标 -->
         {#if tab.isPinned}
@@ -237,6 +249,14 @@
       class="fixed z-50 bg-white dark:bg-gray-800 shadow-lg rounded-md border border-gray-200 dark:border-gray-700 py-1 min-w-[180px]"
       style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
       on:click|stopPropagation
+      on:keydown={(e) => {
+        if (e.key === 'Escape') {
+          closeContextMenu();
+        }
+      }}
+      role="menu"
+      aria-labelledby="context-menu"
+      tabindex="0"
     >
       <button
         type="button"
@@ -305,8 +325,6 @@
     opacity: 1;
   }
 
-  .tab-item.group:hover .tab-close-btn {
-    opacity: 1;
-  }
+
 </style>
 

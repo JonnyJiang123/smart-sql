@@ -16,7 +16,22 @@ import type {
 } from '../types';
 
 // API基础URL
-const API_BASE_URL = '/api';
+let API_BASE_URL = "/api";
+
+// 尝试导入Tauri API，检测是否在Tauri环境中
+async function detectTauriEnvironment() {
+  try {
+    if (typeof window !== "undefined" && (window as any).__TAURI__) {
+      // 在Tauri环境中，使用完整的后端URL
+      API_BASE_URL = "http://127.0.0.1:8080/api";
+    }
+  } catch (error) {
+    console.log("Not running in Tauri environment:", error);
+  }
+}
+
+// 初始化环境检测
+detectTauriEnvironment();
 
 // 通用fetch函数封装
 async function fetchApi<T>(

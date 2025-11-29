@@ -1,12 +1,9 @@
 ﻿<script lang="ts">
-  import { onMount } from 'svelte';
-  import { appStore } from './stores/appStore';
   import { tabStore } from './stores/tabStore';
   import DatabaseTree from './components/DatabaseTree.svelte';
   import ConnectionManager from './components/ConnectionManager.svelte';
   import TabBar from './components/TabBar.svelte';
   import QueryTab from './components/QueryTab.svelte';
-  import type { DatabaseConnection } from './types';
 
   let title = '智能SQLer';
   let subtitle = 'AI数据库管理工具';

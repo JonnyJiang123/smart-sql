@@ -314,18 +314,27 @@
       <!-- 执行计划弹窗 -->
       {#if showExecutionPlan}
         <!-- 遮罩层 -->
-        <div 
+        <div
           class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center"
           on:click={() => showExecutionPlan = false}
+          on:keydown={(e) => {
+            if (e.key === 'Escape') {
+              showExecutionPlan = false;
+            }
+          }}
+          role="presentation"
+          aria-hidden="true"
         >
           <!-- 弹窗容器 -->
-          <div 
+          <div
             class="bg-white dark:bg-gray-900 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col"
-            on:click|stopPropagation
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="execution-plan-title"
           >
             <!-- 弹窗头部 -->
             <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-              <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">执行计划</h3>
+              <h3 id="execution-plan-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">执行计划</h3>
               <button
                 on:click={() => showExecutionPlan = false}
                 class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"

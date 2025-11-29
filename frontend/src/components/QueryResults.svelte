@@ -71,64 +71,6 @@
     return sortedRows.slice(start, end);
   })();
   
-  // 获取过滤后的行
-  function getFilteredRows() {
-    console.log('getFilteredRows - result:', result);
-    console.log('getFilteredRows - result?.rows:', result?.rows);
-    console.log('getFilteredRows - filterText:', filterText);
-    console.log('getFilteredRows - filterText.trim():', filterText.trim());
-    
-    if (!result || !filterText.trim()) {
-      const rows = result?.rows || [];
-      console.log('getFilteredRows - returning (no filter):', rows);
-      return rows;
-    }
-    
-    const searchLower = filterText.toLowerCase();
-    return result.rows.filter(row => 
-      row.some((cell: any) => 
-        String(cell).toLowerCase().includes(searchLower)
-      )
-    );
-  }
-  
-  // 获取排序后的行
-  function getSortedRows() {
-    if (!sortColumn || !result) {
-      return filteredRows;
-    }
-    
-    const columnIndex = result.columns.indexOf(sortColumn);
-    if (columnIndex === -1) return filteredRows;
-    
-    const sorted = [...filteredRows].sort((a, b) => {
-      const aVal = a[columnIndex];
-      const bVal = b[columnIndex];
-      
-      if (aVal === null || aVal === undefined) return 1;
-      if (bVal === null || bVal === undefined) return -1;
-      
-      if (typeof aVal === 'number' && typeof bVal === 'number') {
-        return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
-      }
-      
-      const aStr = String(aVal);
-      const bStr = String(bVal);
-      return sortDirection === 'asc' 
-        ? aStr.localeCompare(bStr)
-        : bStr.localeCompare(aStr);
-    });
-    
-    return sorted;
-  }
-  
-  // 获取分页后的行
-  function getPaginatedRows() {
-    const start = (currentPage - 1) * pageSize;
-    const end = start + pageSize;
-    return sortedRows.slice(start, end);
-  }
-  
   // 排序处理
   function handleSort(column: string) {
     if (sortColumn === column) {
@@ -510,7 +452,6 @@
             <tr class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
               {#each row as cell}
                 {@const isNull = cell === null || cell === undefined}
-                {@const isNumber = typeof cell === 'number'}
                 <td 
                   class="px-4 py-2 text-sm border-r border-gray-200 dark:border-gray-700 last:border-r-0"
                   class:text-gray-400={isNull}
