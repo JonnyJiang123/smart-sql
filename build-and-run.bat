@@ -16,7 +16,7 @@ echo 清理完成
 echo [2/5] 编译前端...
 cd frontend
 call npm run build
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo 前端编译失败！
     pause
     exit /b 1
@@ -27,7 +27,7 @@ echo 前端编译成功
 echo [3/5] 编译后端...
 cd ..\backend
 call cargo build --release
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo 后端编译失败！
     pause
     exit /b 1
@@ -38,7 +38,7 @@ echo 后端编译成功
 echo [4/5] 构建Tauri桌面应用...
 cd ..\frontend
 call npm run tauri build
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo Tauri构建失败！
     pause
     exit /b 1

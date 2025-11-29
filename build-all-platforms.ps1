@@ -10,6 +10,9 @@
 .uild-all-platforms.ps1
 #>
 
+# 设置输出编码为UTF-8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 Write-Host "=======================================" -ForegroundColor Cyan
 Write-Host "智能SQLer - 跨平台打包脚本" -ForegroundColor Cyan
 Write-Host "=======================================" -ForegroundColor Cyan
