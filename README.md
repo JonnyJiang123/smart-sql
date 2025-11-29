@@ -99,18 +99,84 @@ smart-sql/
 
 ## 📋 快速开始
 
+### 环境依赖
+- **Rust**: 1.91或更高版本
+- **Node.js**: 16.x或更高版本
+- **npm**: 8.x或更高版本
+
 ### 后端设置
 
 1. 配置环境变量
 ```bash
 # 编辑.env文件，添加OpenAI API密钥等配置
+cp .env.example .env
+# 编辑.env文件，填写你的配置
 ```
 
-2. 构建并运行后端
+2. 开发模式启动后端
+```bash
+cd backend
+cargo run
+```
+
+3. 生产模式构建并运行后端
 ```bash
 cd backend
 cargo build --release
 cargo run --release
+```
+
+### 前端设置
+
+1. 安装依赖
+```bash
+cd frontend
+npm install
+```
+
+2. 开发模式启动前端
+```bash
+cd frontend
+npm run dev
+```
+
+3. 生产模式构建前端
+```bash
+cd frontend
+npm run build
+npm run preview
+```
+
+### 完整启动流程
+
+1. 启动后端服务
+```bash
+cd backend
+cargo run
+# 后端服务将在 http://localhost:8080 启动
+```
+
+2. 在新终端启动前端服务
+```bash
+cd frontend
+npm run dev
+# 前端服务将在 http://localhost:5173 启动
+```
+
+3. 访问应用
+   - 在浏览器中访问 `http://localhost:5173`
+   - 开始使用智能SQLer
+
+### Tauri桌面应用（可选）
+
+如果需要构建桌面应用，需要额外安装Tauri CLI：
+
+```bash
+cd frontend
+npm install -g @tauri-apps/cli
+npm run tauri dev
+# 或构建生产版本
+npm run tauri build
 ```
 
 ### 🔒 安全措施
