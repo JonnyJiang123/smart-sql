@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head><title>API Test</title></head>
+<body>
+<button onclick="testQuery()">Test Query</button>
+<pre id="result"></pre>
+<script>
+async function testQuery() {
+  try {
+    const response = await fetch('/api/database/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql: 'SELECT * FROM student LIMIT 1' })
+    });
+    const data = await response.json();
+    document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+    console.log('Query result:', data);
+  } catch (error) {
+    document.getElementById('result').textContent = 'Error: ' + error.message;
+    console.error('Error:', error);
+  }
+}
+</script>
+</body>
+</html>

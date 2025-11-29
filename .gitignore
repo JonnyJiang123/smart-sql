@@ -1,0 +1,64 @@
+# Rust相关
+target/
+**/target/
+Cargo.lock
+*.rs.bk
+
+# Svelte/TypeScript相关
+node_modules/
+**/node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# 编辑器相关
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统相关
+.DS_Store
+Thumbs.db
+
+# 配置文件
+.env
+.env.local
+.env.*.local
+.env.example
+
+# 日志文件
+logs/
+*.log
+test-results.txt
+
+# 测试相关
+coverage/
+.nyc_output/
+
+# 数据库文件
+data/
+**/data/
+*.db
+
+# 编译生成文件
+*.exe
+*.pdb
+*.dll
+*.lib
+*.exp
+
+# 临时文件
+*.tmp
+*.bak
+.cache/
+temp_migration.sql
+
+# IDE和编辑器目录
+.claude/
+.clinerules/
+.cursor/
+.qoder/
+.temp/
+.trae/

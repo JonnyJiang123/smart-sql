@@ -1,0 +1,46 @@
+# 智能SQLer部署配置
+
+[general]
+# 应用名称
+app_name = "smart-sql"
+# 应用版本
+version = "1.0.0"
+# 环境配置 (development, staging, production)
+environment = "development"
+
+[backend]
+# 服务端口
+port = 8000
+# 主机地址
+host = "127.0.0.1"
+# 线程数
+workers = 4
+# 日志级别 (debug, info, warn, error)
+log_level = "info"
+
+[database]
+# 默认数据库连接配置
+[database.default]
+url = "postgresql://admin:password@localhost:5432/example_db"
+pool_size = 10
+max_lifetime = 3600
+
+[security]
+# JWT密钥 (生产环境请使用强密钥)
+jwt_secret = "your-strong-secret-key-here"
+jwt_expiry_hours = 24
+# CORS配置
+allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+[ai_service]
+# OpenAI API配置
+openai_api_key = "your-openai-api-key"
+openai_model = "gpt-4"
+timeout_seconds = 30
+max_tokens = 1000
+
+[monitoring]
+# 启用指标收集
+enable_metrics = true
+# 健康检查端点路径
+health_check_path = "/api/health"
