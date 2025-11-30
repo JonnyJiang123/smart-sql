@@ -4,6 +4,7 @@ use std::time::Instant;
 use log::*;
 use uuid::Uuid;
 use sqlx::Row;
+use futures_util::TryStreamExt;
 
 use crate::db::{DatabaseManager, LocalStorageManager};
 use crate::models::{
@@ -11,17 +12,20 @@ use crate::models::{
     SqlOptimizeRequest, SqlOptimizeResponse,
     SqlExplainRequest, SqlExplainResponse,
     TemplateListResponse, SqlQueryRequest, SqlQueryResult,
-    ErrorResponse as ModelErrorResponse, QueryPerformance,
-    TableSchema, TableColumn, TableIndex, TemplateType, TemplateResponse, TemplateRequest,
-    BatchSqlRequest, BatchSqlResult, StatementResult,
+    ErrorResponse as ModelErrorResponse,
+    TableColumn, TableIndex, TemplateType, TemplateResponse, TemplateRequest,
+    BatchSqlRequest, BatchSqlResult,
     ExecutionPlanRequest, ExecutionPlanResponse, ExecutionPlanNode,
     DatabaseConnection as DbConnection
 };
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
-use crate::utils::db_utils::{get_table_schema, execute_sql_query, execute_sql_query_with_pagination, count_query_rows};
+
 use crate::services::ai::AiService;
 use crate::services::templates::{TemplateManager, PromptTemplate};
+
+// 类型别名，用于简化复杂类型
+type QueryCancellerMap = Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>>;
 
 // 健康检查响应
 #[derive(Serialize)]
@@ -38,21 +42,8 @@ struct DatabaseInfoResponse {
 }
 
 // 敏感词汇检测
-impl<T> From<T> for ErrorResponse where T: ToString {
-    fn from(err: T) -> Self {
-        ErrorResponse {
-            error: "error".to_string(),
-            message: err.to_string(),
-        }
-    }
-}
 
-// API错误响应
-#[derive(Serialize)]
-struct ErrorResponse {
-    error: String,
-    message: String,
-}
+
 
 // 表请求参数
 #[derive(Serialize, Deserialize)]
@@ -70,11 +61,11 @@ struct ApiTableSchema {
     pub indexes: Option<Vec<TableIndex>>,
     pub description: Option<String>,
     #[serde(rename = "createdAt")]
-    pub createdAt: Option<String>,
+    pub created_at: Option<String>,
     #[serde(rename = "updatedAt")]
-    pub updatedAt: Option<String>,
+    pub updated_at: Option<String>,
     #[serde(rename = "rowCount")]
-    pub rowCount: Option<u64>,
+    pub row_count: Option<u64>,
     pub size: Option<u64>,
 }
 
@@ -84,7 +75,7 @@ pub fn create_routes() -> Router {
         // 健康检查
         .route("/health", get(health_check))
         // 数据库API路由组
-        .nest("/api/database", 
+        .nest("/database", 
             Router::new()
                 // 数据库信息
                 .route("/info", get(get_database_info))
@@ -100,7 +91,7 @@ pub fn create_routes() -> Router {
                 .route("/query/:query_id/cancel", post(cancel_query))
         )
         // AI功能API路由组
-        .nest("/api/ai", 
+        .nest("/ai", 
             Router::new()
                 // 生成SQL
                 .route("/sql/generate", post(generate_sql))
@@ -108,9 +99,12 @@ pub fn create_routes() -> Router {
                 .route("/sql/optimize", post(optimize_sql))
                 // 解释SQL
                 .route("/sql/explain", post(explain_sql))
+                // AI配置管理
+                .route("/config", get(get_ai_config))
+                .route("/config", post(save_ai_config))
         )
         // 模板管理API路由组
-        .nest("/api/templates", 
+        .nest("/templates", 
             Router::new()
                 // 获取模板列表
                 .route("/", get(get_templates))
@@ -126,7 +120,7 @@ pub fn create_routes() -> Router {
                 .route("/set-default", post(set_default_template))
         )
         // 连接配置管理API路由组
-        .nest("/api/connections",
+        .nest("/connections",
             Router::new()
                 // 连接列表
                 .route("/", get(list_connections))
@@ -144,7 +138,7 @@ pub fn create_routes() -> Router {
                 .route("/test", post(test_connection))
         )
         // 查询历史API路由组
-        .nest("/api/history",
+        .nest("/history",
             Router::new()
                 // 查询历史列表
                 .route("/", get(list_query_history))
@@ -237,6 +231,7 @@ async fn get_database_info(
     
     // 继续使用获取到的连接
     // 构建连接字符串
+    #[allow(clippy::needless_borrow)]
     let conn_str = build_connection_string(&connection)?;
     
     // 创建数据库管理器
@@ -275,6 +270,213 @@ async fn get_database_info(
     }
 }
 
+// 辅助函数：查找匹配的右括号位置
+fn find_close_bracket(s: &str) -> Option<usize> {
+    let mut depth = 1;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' | '{' | '[' => depth += 1,
+            ')' | '}' | ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+// 辅助函数：分割参数列表，考虑嵌套括号
+fn split_params(s: &str) -> Vec<&str> {
+    let mut params = Vec::new();
+    let mut start = 0;
+    let mut depth = 0;
+    
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' | '{' | '[' => depth += 1,
+            ')' | '}' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                let param = s[start..i].trim();
+                params.push(param);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    
+    // 添加最后一个参数
+    if start < s.len() {
+        let param = s[start..].trim();
+        params.push(param);
+    }
+    
+    params
+}
+
+// 辅助函数：将MongoDB Shell语法转换为有效的JSON字符串
+fn mongodb_shell_to_json(shell_str: &str) -> Result<String, String> {
+    let mut json_str = String::new();
+    let mut in_string = false;
+    let mut string_delimiter = '"';
+    let mut in_key = true;
+    let mut depth = 0;
+    
+    for c in shell_str.chars() {
+        match c {
+            '"' | '\'' => {
+                if !in_string {
+                    // 开始字符串
+                    in_string = true;
+                    string_delimiter = c;
+                    json_str.push('"');
+                } else if c == string_delimiter {
+                    // 结束字符串
+                    in_string = false;
+                    json_str.push('"');
+                } else {
+                    // 字符串内部的引号，直接添加
+                    json_str.push(c);
+                }
+            }
+            ':' => {
+                if !in_string {
+                    // 键值分隔符，结束键，开始值
+                    in_key = false;
+                    json_str.push(':');
+                } else {
+                    // 字符串内部的冒号，直接添加
+                    json_str.push(c);
+                }
+            }
+            '{' | '[' => {
+                if !in_string {
+                    // 开始对象或数组，增加深度
+                    depth += 1;
+                    json_str.push(c);
+                    in_key = true;
+                } else {
+                    // 字符串内部的括号，直接添加
+                    json_str.push(c);
+                }
+            }
+            '}' | ']' => {
+                if !in_string {
+                    // 结束对象或数组，减少深度
+                    depth -= 1;
+                    json_str.push(c);
+                    in_key = true;
+                } else {
+                    // 字符串内部的括号，直接添加
+                    json_str.push(c);
+                }
+            }
+            ',' => {
+                if !in_string {
+                    // 键值对分隔符，开始新的键
+                    json_str.push(',');
+                    in_key = true;
+                } else {
+                    // 字符串内部的逗号，直接添加
+                    json_str.push(c);
+                }
+            }
+            ' ' | '\t' | '\n' => {
+                if in_string {
+                    // 字符串内部的空格，直接添加
+                    json_str.push(c);
+                } else {
+                    // 字符串外部的空格，跳过
+                }
+            }
+            _ => {
+                if !in_string {
+                    if in_key {
+                        // 键名的字符，添加引号
+                        json_str.push('"');
+                        json_str.push(c);
+                        in_key = false;
+                    } else {
+                        // 值的字符，直接添加
+                        json_str.push(c);
+                    }
+                } else {
+                    // 字符串内部的字符，直接添加
+                    json_str.push(c);
+                }
+            }
+        }
+    }
+    
+    Ok(json_str)
+}
+
+// 辅助函数：解析MongoDB投影参数，支持MongoDB Shell语法，如 { name: 1, _id: 0 }
+fn parse_mongodb_projection(projection_str: &str) -> Result<mongodb::bson::Document, String> {
+    // 将MongoDB Shell语法转换为有效的JSON字符串
+    let json_str = mongodb_shell_to_json(projection_str)?;
+    
+    // 使用serde_json解析JSON字符串
+    let json_value = serde_json::from_str::<serde_json::Value>(&json_str)
+        .map_err(|e| format!("JSON解析失败: {}", e))?;
+    
+    // 将serde_json::Value转换为bson::Document
+    let bson_doc = mongodb::bson::to_document(&json_value)
+        .map_err(|e| format!("转换为BSON失败: {}", e))?;
+    
+    Ok(bson_doc)
+}
+
+// 辅助函数：为SQL语句添加LIMIT限制
+// 如果没有LIMIT，添加默认LIMIT 200
+// 如果有LIMIT，将其限制在1500以内
+fn add_limit_to_sql(sql: &str) -> String {
+    let sql_lower = sql.to_lowercase();
+    
+    // 检查是否已经包含LIMIT子句
+    if sql_lower.contains(" limit ") {
+        // 提取当前的LIMIT值
+        if let Some(limit_index) = sql_lower.find(" limit ") {
+            let after_limit = &sql[limit_index + 7..];
+            
+            // 查找LIMIT后面的数字
+            let mut limit_value = String::new();
+            for c in after_limit.chars() {
+                if c.is_digit(10) {
+                    limit_value.push(c);
+                } else if c.is_whitespace() {
+                    continue;
+                } else {
+                    break;
+                }
+            }
+            
+            // 解析LIMIT值
+            let mut limit = limit_value.parse::<u32>().unwrap_or(200);
+            // 限制在1500以内
+            limit = limit.min(1500);
+            
+            // 替换原有的LIMIT子句
+            let before_limit = &sql[..limit_index + 7];
+            let after_limit_digit = if let Some(non_digit) = after_limit.find(|c: char| !c.is_digit(10) && !c.is_whitespace()) {
+                &after_limit[non_digit..]
+            } else {
+                ""
+            };
+            
+            format!("{}{}{}", before_limit, limit, after_limit_digit)
+        } else {
+            // 无法找到LIMIT位置，添加默认LIMIT
+            format!("{} LIMIT 200", sql)
+        }
+    } else {
+        // 没有LIMIT，添加默认LIMIT 200
+        format!("{} LIMIT 200", sql)
+    }
+}
+
 // 辅助函数：构建连接字符串
 fn build_connection_string(connection: &DbConnection) -> Result<String, (StatusCode, Json<ModelErrorResponse>)> {
     if let Some(ref cs) = connection.connection_string {
@@ -306,6 +508,20 @@ fn build_connection_string(connection: &DbConnection) -> Result<String, (StatusC
                 let pass = connection.password.as_deref().unwrap_or("");
                 let conn_str = format!("postgresql://{}:{}@{}:{}/{}", user, pass, host, port, db_name);
                 log::info!("[build_connection_string] PostgreSQL连接字符串: postgresql://{}:***@{}:{}/{}", user, host, port, db_name);
+                return Ok(conn_str);
+            }
+            "mongodb" => {
+                let user = connection.username.as_deref().unwrap_or("root");
+                let pass = connection.password.as_deref().unwrap_or("");
+                
+                // 构建MongoDB连接字符串，添加authSource参数
+            let conn_str = if !user.is_empty() && !pass.is_empty() {
+                format!(r#"mongodb://{}:{}@{}:{}/{}?authSource=admin"#, user, pass, host, port, db_name)
+            } else {
+                format!("mongodb://{}:{}/{}", host, port, db_name)
+            };
+                
+                log::info!("[build_connection_string] MongoDB连接字符串: mongodb://{}:***@{}:{}/{}", user, host, port, db_name);
                 return Ok(conn_str);
             }
             _ => {}
@@ -375,6 +591,7 @@ async fn get_table_structure(
     };
     
     // 构建连接字符串
+    #[allow(clippy::needless_borrow)]
     let conn_str = build_connection_string(&connection)?;
     
     // 创建数据库管理器
@@ -415,13 +632,13 @@ async fn get_table_structure(
             .map(|(name, data_type, is_nullable, key, default_value, comment)| {
                 TableColumn {
                     name,
-                    dataType: Some(data_type.clone()),
+                    data_type: Some(data_type.clone()),
                     type_: Some(data_type),
                     nullable: Some(is_nullable == "YES"),
-                    isNullable: Some(is_nullable == "YES"),
-                    isPrimaryKey: Some(key == "PRI"),
+                    is_nullable: Some(is_nullable == "YES"),
+                    is_primary_key: Some(key == "PRI"),
                     default_: default_value.clone(),
-                    defaultValue: default_value,
+                    default_value,
                     comment: Some(comment.clone()),
                     description: Some(comment),
                 }
@@ -450,13 +667,13 @@ async fn get_table_structure(
             .map(|(name, data_type, is_nullable)| {
                 TableColumn {
                     name,
-                    dataType: Some(data_type.clone()),
+                    data_type: Some(data_type.clone()),
                     type_: Some(data_type),
                     nullable: Some(is_nullable == "YES"),
-                    isNullable: Some(is_nullable == "YES"),
-                    isPrimaryKey: Some(false),
+                    is_nullable: Some(is_nullable == "YES"),
+                    is_primary_key: Some(false),
                     default_: None,
-                    defaultValue: None,
+                    default_value: None,
                     comment: None,
                     description: None,
                 }
@@ -481,18 +698,23 @@ async fn get_table_structure(
             .map(|(_cid, name, type_, notnull, dflt_value, pk)| {
                 TableColumn {
                     name,
-                    dataType: Some(type_.clone()),
+                    data_type: Some(type_.clone()),
                     type_: Some(type_),
                     nullable: Some(notnull == 0),
-                    isNullable: Some(notnull == 0),
-                    isPrimaryKey: Some(pk == 1),
+                    is_nullable: Some(notnull == 0),
+                    is_primary_key: Some(pk == 1),
                     default_: dflt_value.clone(),
-                    defaultValue: dflt_value,
+                    default_value: dflt_value,
                     comment: None,
                     description: None,
                 }
             })
             .collect::<Vec<_>>()
+        }
+        crate::db::DatabasePool::MongoDB(_, _) => {
+            // MongoDB没有固定的表结构，返回空列表
+            // 实际应用中可以从集合中采样文档来推断结构
+            Vec::new()
         }
     };
     
@@ -506,7 +728,7 @@ async fn get_table_structure(
                         type_: None,
                         columns,
                         unique: Some(is_unique),
-                        isPrimaryKey: Some(name == "PRIMARY"),
+                        is_primary_key: Some(name == "PRIMARY"),
                         method: None,
                     }
                 })
@@ -523,9 +745,9 @@ async fn get_table_structure(
         columns: columns.clone(),
         indexes: indexes.clone(),
         description: None,
-        createdAt: None,
-        updatedAt: None,
-        rowCount: None,
+        created_at: None,
+        updated_at: None,
+        row_count: None,
         size: None,
     };
     info!("[API] POST /api/database/table/structure - 响应: 表={}, 字段数={}, 索引数={}", 
@@ -603,6 +825,7 @@ async fn generate_sql(
     log::info!("使用连接: {} (类型: {})", connection.name, connection.db_type);
     
     // 构建连接字符串
+    #[allow(clippy::needless_borrow)]
     let conn_str = build_connection_string(&connection)?;
     
     // 创建数据库管理器并获取所有表的schema
@@ -639,7 +862,9 @@ async fn generate_sql(
     
     // 构建完整的数据库Schema信息
     let mut schema_builder = String::new();
-    schema_builder.push_str(&format!("数据库类型: {}\n", connection.db_type));
+    // 优先使用请求中的database_type，否则使用连接的数据库类型
+    let effective_db_type = req.database_type.as_deref().unwrap_or(&connection.db_type);
+    schema_builder.push_str(&format!("数据库类型: {}\n", effective_db_type));
     schema_builder.push_str(&format!("数据库名称: {}\n\n", connection.database_name.as_deref().unwrap_or("default")));
     schema_builder.push_str("表结构:\n");
     
@@ -656,9 +881,9 @@ async fn generate_sql(
                     schema_builder.push_str(&format!(
                         "     - {} ({}){}{}",
                         col.name,
-                        col.dataType.as_deref().unwrap_or("UNKNOWN"),
-                        if col.isPrimaryKey.unwrap_or(false) { " [主键]" } else { "" },
-                        if !col.isNullable.unwrap_or(true) { " [NOT NULL]" } else { "" }
+                        col.data_type.as_deref().unwrap_or("UNKNOWN"),
+                        if col.is_primary_key.unwrap_or(false) { " [主键]" } else { "" },
+                        if !col.is_nullable.unwrap_or(true) { " [NOT NULL]" } else { "" }
                     ));
                     if let Some(comment) = &col.comment {
                         if !comment.is_empty() {
@@ -676,7 +901,7 @@ async fn generate_sql(
                                 "     - {} ({}){}",
                                 idx.name,
                                 idx.columns.join(", "),
-                                if idx.isPrimaryKey.unwrap_or(false) { " [主键]" } else if idx.unique.unwrap_or(false) { " [唯一]" } else { "" }
+                                if idx.is_primary_key.unwrap_or(false) { " [主键]" } else if idx.unique.unwrap_or(false) { " [唯一]" } else { "" }
                             ));
                             schema_builder.push('\n');
                         }
@@ -694,7 +919,7 @@ async fn generate_sql(
     }
     
     let database_schema = schema_builder;
-    let database_type = &connection.db_type;
+    let database_type = effective_db_type;
     
     log::info!("Schema构建完成，长度: {} 字符", database_schema.len());
     log::info!("调用AI服务生成SQL");
@@ -750,7 +975,7 @@ async fn get_table_structure_internal(
     db_manager: &DatabaseManager,
     table_name: &str,
 ) -> Result<ApiTableSchema, String> {
-    use sqlx::{Row, Column, TypeInfo};
+    use sqlx::Row;
     
     match &db_manager.pool {
         crate::db::DatabasePool::MySQL(pool) => {
@@ -776,13 +1001,13 @@ async fn get_table_structure_internal(
                 
                 columns.push(TableColumn {
                     name,
-                    dataType: Some(data_type.clone()),
+                    data_type: Some(data_type.clone()),
                     type_: Some(data_type),
                     nullable: Some(is_nullable == "YES"),
-                    isNullable: Some(is_nullable == "YES"),
-                    isPrimaryKey: Some(column_key == "PRI"),
+                    is_nullable: Some(is_nullable == "YES"),
+                    is_primary_key: Some(column_key == "PRI"),
                     default_: column_default.clone(),
-                    defaultValue: column_default,
+                    default_value: column_default,
                     comment: Some(comment.clone()),
                     description: Some(comment),
                 });
@@ -816,7 +1041,7 @@ async fn get_table_structure_internal(
                     type_: None,
                     columns,
                     unique: Some(unique),
-                    isPrimaryKey: Some(is_primary),
+                    is_primary_key: Some(is_primary),
                     method: None,
                 }
             }).collect();
@@ -826,13 +1051,114 @@ async fn get_table_structure_internal(
                 columns,
                 indexes: Some(indexes),
                 description: None,
-                createdAt: None,
-                updatedAt: None,
-                rowCount: None,
+                created_at: None,
+                updated_at: None,
+                row_count: None,
                 size: None,
             })
-        }
-        _ => Err("暂不支持此数据库类型".to_string())
+        },
+        crate::db::DatabasePool::PostgreSQL(pool) => {
+            // 获取PostgreSQL表结构
+            let rows = sqlx::query(
+                "SELECT column_name, data_type, is_nullable, column_default, description
+                 FROM information_schema.columns
+                 WHERE table_name = $1
+                 ORDER BY ordinal_position"
+            )
+            .bind(table_name)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("查询表结构失败: {}", e))?;
+            
+            let mut columns = Vec::new();
+            for row in rows {
+                let name: String = row.try_get(0).unwrap_or_default();
+                let data_type: String = row.try_get(1).unwrap_or_default();
+                let is_nullable: String = row.try_get(2).unwrap_or_default();
+                let default_value: Option<String> = row.try_get(3).ok();
+                let description: Option<String> = row.try_get(4).ok();
+                
+                columns.push(TableColumn {
+                    name,
+                    data_type: Some(data_type.clone()),
+                    type_: Some(data_type),
+                    nullable: Some(is_nullable == "YES"),
+                    is_nullable: Some(is_nullable == "YES"),
+                    is_primary_key: Some(false), // PostgreSQL需要额外查询主键
+                    default_: default_value.clone(),
+                    default_value,
+                    comment: description.clone(),
+                    description,
+                });
+            }
+            
+            Ok(ApiTableSchema {
+                name: table_name.to_string(),
+                columns,
+                indexes: None, // 简化处理，暂不获取PostgreSQL索引
+                description: None,
+                created_at: None,
+                updated_at: None,
+                row_count: None,
+                size: None,
+            })
+        },
+        crate::db::DatabasePool::SQLite(pool) => {
+            // 获取SQLite表结构
+            let rows = sqlx::query(
+                &format!("PRAGMA table_info('{}')", table_name)
+            )
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("查询表结构失败: {}", e))?;
+            
+            let mut columns = Vec::new();
+            for row in rows {
+                let name: String = row.try_get(1).unwrap_or_default();
+                let type_: String = row.try_get(2).unwrap_or_default();
+                let notnull: i32 = row.try_get(3).unwrap_or(0);
+                let dflt_value: Option<String> = row.try_get(4).ok();
+                let pk: i32 = row.try_get(5).unwrap_or(0);
+                
+                columns.push(TableColumn {
+                    name,
+                    data_type: Some(type_.clone()),
+                    type_: Some(type_),
+                    nullable: Some(notnull == 0),
+                    is_nullable: Some(notnull == 0),
+                    is_primary_key: Some(pk == 1),
+                    default_: dflt_value.clone(),
+                    default_value: dflt_value,
+                    comment: None,
+                    description: None,
+                });
+            }
+            
+            Ok(ApiTableSchema {
+                name: table_name.to_string(),
+                columns,
+                indexes: None, // 简化处理，暂不获取SQLite索引
+                description: None,
+                created_at: None,
+                updated_at: None,
+                row_count: None,
+                size: None,
+            })
+        },
+        crate::db::DatabasePool::MongoDB(_, _) => {
+            // MongoDB没有固定的表结构，返回空的列列表
+            // 实际应用中可以从集合中采样文档来推断结构
+            Ok(ApiTableSchema {
+                name: table_name.to_string(),
+                columns: Vec::new(),
+                indexes: None,
+                description: None,
+                created_at: None,
+                updated_at: None,
+                row_count: None,
+                size: None,
+            })
+        },
     }
 }
 
@@ -1041,50 +1367,77 @@ async fn execute_query(
     
     let result = match &db_manager.pool {
         crate::db::DatabasePool::MySQL(pool) => {
-            let rows = sqlx::query(&payload.sql)
+            // 记录实际执行的SQL语句
+            log::info!("[API] 执行MySQL查询: {}", payload.sql);
+            
+            // 尝试使用fetch_all方法，添加详细的错误日志
+            let rows = match sqlx::query(&payload.sql)
                 .fetch_all(pool)
-                .await
-                .map_err(|e| (
-                    StatusCode::BAD_REQUEST,
-                    Json(ModelErrorResponse {
-                        error: "query_error".to_string(),
-                        message: format!("查询执行失败: {}", e),
-                        details: None,
-                    })
-                ))?;
+                .await {
+                    Ok(rows) => {
+                        log::info!("[API] MySQL查询成功，返回 {} 行数据", rows.len());
+                        rows
+                    },
+                    Err(e) => {
+                        log::error!("[API] MySQL查询失败: {}", e);
+                        log::error!("[API] 失败的SQL: {}", payload.sql);
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            Json(ModelErrorResponse {
+                                error: "query_error".to_string(),
+                                message: format!("查询执行失败: {}", e),
+                                details: Some(payload.sql.clone()),
+                            })
+                        ));
+                    }
+                };
             
             // 提取列名
             let columns: Vec<String> = if let Some(first_row) = rows.first() {
-                first_row.columns().iter().map(|col| col.name().to_string()).collect()
+                let cols = first_row.columns().iter().map(|col| col.name().to_string()).collect();
+                log::info!("[API] 查询列名: {:?}", cols);
+                cols
             } else {
                 vec![]
             };
             
             // 转换行数据为JSON
             let mut json_rows = Vec::new();
-            for row in &rows {
+            for (row_idx, row) in rows.iter().enumerate() {
                 let mut json_row = Vec::new();
                 for (i, column) in row.columns().iter().enumerate() {
-                    let value = match column.type_info().name() {
-                        "TINYINT" | "SMALLINT" | "INT" | "MEDIUMINT" | "BIGINT" => {
-                            row.try_get::<i64, _>(i)
-                                .map(|v| serde_json::json!(v))
-                                .unwrap_or(serde_json::json!(null))
-                        }
-                        "FLOAT" | "DOUBLE" | "DECIMAL" => {
-                            row.try_get::<f64, _>(i)
-                                .map(|v| serde_json::json!(v))
-                                .unwrap_or(serde_json::json!(null))
-                        }
-                        "VARCHAR" | "CHAR" | "TEXT" | "MEDIUMTEXT" | "LONGTEXT" => {
-                            row.try_get::<String, _>(i)
-                                .map(|v| serde_json::json!(v))
-                                .unwrap_or(serde_json::json!(null))
-                        }
-                        _ => {
-                            row.try_get::<String, _>(i)
-                                .map(|v| serde_json::json!(v))
-                                .unwrap_or(serde_json::json!(null))
+                    let col_name = column.name();
+                    let col_type = column.type_info().name();
+                    log::debug!("[API] 处理行 {} 的列 {} (类型: {})
+", row_idx, col_name, col_type);
+                    
+                    // 使用更通用的方式获取数据
+                    let value = match row.try_get::<String, _>(i) {
+                        Ok(v) => {
+                            log::debug!("[API] 列 {} 获取为字符串: {}", col_name, v);
+                            serde_json::json!(v)
+                        },
+                        Err(e1) => {
+                            log::debug!("[API] 列 {} 获取字符串失败: {}, 尝试获取为i64", col_name, e1);
+                            match row.try_get::<i64, _>(i) {
+                                Ok(v) => {
+                                    log::debug!("[API] 列 {} 获取为i64: {}", col_name, v);
+                                    serde_json::json!(v)
+                                },
+                                Err(e2) => {
+                                    log::debug!("[API] 列 {} 获取i64失败: {}, 尝试获取为f64", col_name, e2);
+                                    match row.try_get::<f64, _>(i) {
+                                        Ok(v) => {
+                                            log::debug!("[API] 列 {} 获取为f64: {}", col_name, v);
+                                            serde_json::json!(v)
+                                        },
+                                        Err(e3) => {
+                                            log::debug!("[API] 列 {} 获取f64失败: {}, 返回null", col_name, e3);
+                                            serde_json::json!(null)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     };
                     json_row.push(value);
@@ -1093,6 +1446,7 @@ async fn execute_query(
             }
             
             let execution_time = start.elapsed();
+            log::info!("[API] MySQL查询完成，耗时 {}ms", execution_time.as_millis());
             
             SqlQueryResult {
                 columns,
@@ -1107,7 +1461,10 @@ async fn execute_query(
             }
         }
         crate::db::DatabasePool::PostgreSQL(pool) => {
-            let rows = sqlx::query(&payload.sql)
+            // 为SQL语句添加LIMIT限制
+            let limited_sql = add_limit_to_sql(&payload.sql);
+            
+            let rows = sqlx::query(&limited_sql)
                 .fetch_all(pool)
                 .await
                 .map_err(|e| (
@@ -1173,7 +1530,10 @@ async fn execute_query(
             }
         }
         crate::db::DatabasePool::SQLite(pool) => {
-            let rows = sqlx::query(&payload.sql)
+            // 为SQL语句添加LIMIT限制
+            let limited_sql = add_limit_to_sql(&payload.sql);
+            
+            let rows = sqlx::query(&limited_sql)
                 .fetch_all(pool)
                 .await
                 .map_err(|e| (
@@ -1238,6 +1598,198 @@ async fn execute_query(
                 performance: None,
             }
         }
+        crate::db::DatabasePool::MongoDB(client, db_name) => {
+            // 解析MongoDB查询语句，提取集合名、查询条件和投影参数
+            let database = client.database(db_name);
+            
+            let sql = payload.sql.trim();
+            let sql_lower = sql.to_lowercase();
+            
+            // 解析集合名
+            let collection_name = if sql.starts_with("db.getCollection(") {
+                // 格式：db.getCollection("collection_name").find()
+                if let Some(collection_match) = sql.split(".find(").next() {
+                    if let Some(name) = collection_match.split('"').nth(1) {
+                        name.to_string()
+                    } else {
+                        // 尝试单引号
+                        collection_match.split("'").nth(1).unwrap_or_default().to_string()
+                    }
+                } else {
+                    sql.to_string()
+                }
+            } else if sql.starts_with("db.") {
+                // 格式：db.collection_name.find()
+                if let Some(collection_part) = sql.split(".find(").next() {
+                    collection_part.split('.').nth(1).unwrap_or_default().to_string()
+                } else {
+                    sql.to_string()
+                }
+            } else {
+                // 直接的集合名
+                sql.to_string()
+            };
+            
+            let collection = database.collection::<mongodb::bson::Document>(&collection_name);
+            
+            // 解析find()方法的参数：find(query, projection)
+            let mut query = None;
+            let mut projection = None;
+            
+            // 查找find()方法的参数部分
+            if let Some(find_params) = sql.split_once(".find(") {
+                let params_part = find_params.1;
+                // 找到find()方法的结束括号
+                if let Some(end_idx) = find_close_bracket(params_part) {
+                    let params_str = &params_part[..end_idx];
+                    
+                    // 解析参数
+                    let params: Vec<&str> = split_params(params_str);
+                    
+                    // 第一个参数是查询条件
+                    if let Some(query_str) = params.get(0) {
+                        let trimmed = query_str.trim();
+                        if !trimmed.is_empty() && trimmed != "{}" {
+                            // 使用mongodb的bson::Document::from_reader方法解析JSON字符串
+                            if let Ok(doc) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                                // 将serde_json::Value转换为bson::Document
+                                if let Ok(bson_doc) = mongodb::bson::to_document(&doc) {
+                                    query = Some(bson_doc);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 第二个参数是投影
+                    if let Some(projection_str) = params.get(1) {
+                        let trimmed = projection_str.trim();
+                        if !trimmed.is_empty() && trimmed != "{}" {
+                            // 尝试解析投影参数
+                            let parsed_projection = parse_mongodb_projection(trimmed);
+                            if let Ok(doc) = parsed_projection {
+                                projection = Some(doc);
+                            } else {
+                                log::warn!("解析投影参数失败: {}, 尝试使用serde_json解析", parsed_projection.unwrap_err());
+                                // 回退到使用serde_json解析
+                                if let Ok(doc) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                                    // 将serde_json::Value转换为bson::Document
+                                    if let Ok(bson_doc) = mongodb::bson::to_document(&doc) {
+                                        projection = Some(bson_doc);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 执行查询
+            let mut options = mongodb::options::FindOptions::default();
+            
+            // 设置投影参数
+            options.projection = projection;
+            
+            // 添加LIMIT限制
+            // 检查查询中是否已经包含limit
+            let has_limit = sql_lower.contains(" limit") || sql_lower.contains(".limit(");
+            
+            if has_limit {
+                // 如果有limit，提取limit值并限制在1500以内
+                if let Some(limit_index) = sql_lower.find(".limit(") {
+                    let after_limit = &sql[limit_index + 7..];
+                    
+                    // 查找limit后面的数字
+                    let mut limit_value = String::new();
+                    for c in after_limit.chars() {
+                        if c.is_digit(10) {
+                            limit_value.push(c);
+                        } else if c.is_whitespace() {
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+                    
+                    // 解析limit值
+                    let limit = limit_value.parse::<i64>().unwrap_or(200);
+                    // 限制在1500以内
+                    options.limit = Some(limit.min(1500));
+                } else {
+                    // 默认限制
+                    options.limit = Some(200);
+                }
+            } else {
+                // 没有limit，添加默认limit 200
+                options.limit = Some(200);
+            }
+            
+            let cursor = collection.find(query, Some(options)).await
+                .map_err(|e| (
+                    StatusCode::BAD_REQUEST,
+                    Json(ModelErrorResponse {
+                        error: "query_error".to_string(),
+                        message: format!("MongoDB查询执行失败: {}", e),
+                        details: None,
+                    })
+                ))?;
+            
+            // 获取所有文档
+            let mut documents: Vec<mongodb::bson::Document> = Vec::new();
+            let mut cursor = cursor;
+            while let Some(doc) = cursor.try_next().await.map_err(|e| (
+                StatusCode::BAD_REQUEST,
+                Json(ModelErrorResponse {
+                    error: "query_error".to_string(),
+                    message: format!("MongoDB获取结果失败: {}", e),
+                    details: None,
+                })
+            ))? {
+                documents.push(doc);
+            }
+            
+            // 提取所有唯一列名 - 直接从文档中提取，因为MongoDB驱动已经根据投影参数过滤了字段
+            let mut all_columns = std::collections::HashSet::new();
+            for doc in &documents {
+                for key in doc.keys() {
+                    all_columns.insert(key.clone());
+                }
+            }
+            
+            // 转换为有序列名
+            let mut columns: Vec<String> = all_columns.into_iter().collect();
+            columns.sort();
+            
+            // 转换文档为行数据
+            let mut json_rows = Vec::new();
+            for doc in documents {
+                let mut row = Vec::new();
+                for col in &columns {
+                    let value = if let Some(v) = doc.get(col) {
+                        // 将BSON值转换为JSON
+                        serde_json::to_value(v).unwrap_or(serde_json::json!(null))
+                    } else {
+                        serde_json::json!(null)
+                    };
+                    row.push(value);
+                }
+                json_rows.push(row);
+            }
+            
+            let execution_time = start.elapsed();
+            let row_count = json_rows.len();
+            
+            SqlQueryResult {
+                columns,
+                rows: json_rows,
+                row_count,
+                execution_time_ms: execution_time.as_millis(),
+                total_rows: None,
+                page: None,
+                page_size: None,
+                has_more: false,
+                performance: None,
+            }
+        }
     };
     
     info!("[API] POST /api/database/query - 响应成功: 行数={}, 执行时间={}ms", 
@@ -1250,10 +1802,10 @@ async fn execute_query(
 
 // 查询取消管理器（存储正在执行的查询）
 // 注意：这是一个简化实现，实际生产环境应该使用更完善的查询管理机制
-static QUERY_CANCELLERS: std::sync::OnceLock<Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>>> = 
+static QUERY_CANCELLERS: std::sync::OnceLock<QueryCancellerMap> = 
     std::sync::OnceLock::new();
 
-fn get_query_cancellers() -> Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>> {
+fn get_query_cancellers() -> QueryCancellerMap {
     QUERY_CANCELLERS.get_or_init(|| Arc::new(Mutex::new(HashMap::new()))).clone()
 }
 
@@ -1415,7 +1967,7 @@ async fn get_execution_plan(
                     table: Some(table),
                     index: Some(key),
                     cost: None, // MySQL不直接返回cost
-                    rows: rows,
+                    rows,
                     width: None, // MySQL不直接返回width
                     filter: Some(extra),
                     join_type: Some(join_type),
@@ -1563,6 +2115,147 @@ async fn get_execution_plan(
                 ai_optimized_sql: None,
             }
         },
+        crate::db::DatabasePool::MongoDB(client, db_name) => {
+            // MongoDB执行计划
+            // 解析查询语句，提取集合名和查询条件
+            let sql = payload.sql.trim();
+            
+            // 解析集合名
+            let collection_name = if sql.starts_with("db.getCollection(") {
+                // 格式：db.getCollection("collection_name").find()
+                if let Some(collection_match) = sql.split(".find(").next() {
+                    if let Some(name) = collection_match.split('"').nth(1) {
+                        name.to_string()
+                    } else {
+                        // 尝试单引号
+                        collection_match.split("'").nth(1).unwrap_or_default().to_string()
+                    }
+                } else {
+                    sql.to_string()
+                }
+            } else if sql.starts_with("db.") {
+                // 格式：db.collection_name.find()
+                if let Some(collection_part) = sql.split(".find(").next() {
+                    collection_part.split('.').nth(1).unwrap_or_default().to_string()
+                } else {
+                    sql.to_string()
+                }
+            } else {
+                // 直接的集合名
+                sql.to_string()
+            };
+            
+            let database = client.database(db_name);
+            // 不需要实际使用collection变量，只需要集合名
+            let _collection = database.collection::<mongodb::bson::Document>(&collection_name);
+            
+            // 解析find()方法的参数：find(query, projection)
+            let mut query = None;
+            let mut projection = None;
+            
+            // 查找find()方法的参数部分
+            if let Some(find_params) = sql.split_once(".find(") {
+                let params_part = find_params.1;
+                // 找到find()方法的结束括号
+                if let Some(end_idx) = find_close_bracket(params_part) {
+                    let params_str = &params_part[..end_idx];
+                    
+                    // 解析参数
+                    let params: Vec<&str> = split_params(params_str);
+                    
+                    // 第一个参数是查询条件
+                    if let Some(query_str) = params.get(0) {
+                        let trimmed = query_str.trim();
+                        if !trimmed.is_empty() && trimmed != "{}" {
+                            // 使用serde_json解析查询条件，然后转换为bson::Document
+                            if let Ok(doc) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                                if let Ok(bson_doc) = mongodb::bson::to_document(&doc) {
+                                    query = Some(bson_doc);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 第二个参数是投影
+                    if let Some(projection_str) = params.get(1) {
+                        let trimmed = projection_str.trim();
+                        if !trimmed.is_empty() && trimmed != "{}" {
+                            // 使用serde_json解析投影，然后转换为bson::Document
+                            if let Ok(doc) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                                if let Ok(bson_doc) = mongodb::bson::to_document(&doc) {
+                                    projection = Some(bson_doc);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 构建explain命令
+            let mut find_command = mongodb::bson::Document::new();
+            find_command.insert("find", &collection_name);
+            
+            // 添加查询条件
+            if let Some(q) = query {
+                find_command.insert("filter", q);
+            }
+            
+            // 添加投影
+            if let Some(p) = projection {
+                find_command.insert("projection", p);
+            }
+            
+            // 构建完整的explain命令
+            let mut explain_command = mongodb::bson::Document::new();
+            explain_command.insert("explain", find_command);
+            explain_command.insert("verbosity", "executionStats");
+            
+            // 执行explain命令
+            let explain_result = database.run_command(explain_command, None).await
+                .map_err(|e| (
+                    StatusCode::BAD_REQUEST,
+                    Json(ModelErrorResponse {
+                        error: "explain_error".to_string(),
+                        message: format!("MongoDB执行计划查询失败: {}", e),
+                        details: Some(payload.sql.clone()),
+                    })
+                ))?;
+            
+            // 转换为JSON字符串，以便显示
+            let explain_json = serde_json::to_string_pretty(&explain_result)
+                .map_err(|e| (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ModelErrorResponse {
+                        error: "json_serialize_error".to_string(),
+                        message: format!("执行计划序列化失败: {}", e),
+                        details: None,
+                    })
+                ))?;
+            
+            // 构建执行计划节点
+            let plan_nodes = vec![ExecutionPlanNode {
+                id: 0,
+                parent: None,
+                detail: explain_json.clone(),
+                operation: Some("EXPLAIN".to_string()),
+                table: Some(collection_name.clone()),
+                index: None,
+                cost: None,
+                rows: None,
+                width: None,
+                filter: None,
+                join_type: None,
+            }];
+            
+            ExecutionPlanResponse {
+                plan: plan_nodes,
+                query_plan: Some(explain_json),
+                planning_time: None,
+                execution_time: None,
+                ai_optimization_advice: None,
+                ai_optimized_sql: None,
+            }
+        },
     };
     
     // 调用AI服务生成优化建议
@@ -1571,17 +2264,6 @@ async fn get_execution_plan(
         
         // 获取数据库类型
         let database_type = format!("{:?}", db_manager.db_type);
-        
-        // 构建包含执行计划的优化请求
-        let mut ai_prompt = format!("请根据以下SQL语句和执行计划，给出详细的优化建议：\n\n");
-        ai_prompt.push_str(&format!("SQL语句：{}\n\n", payload.sql));
-        ai_prompt.push_str(&format!("数据库类型：{}\n\n", database_type));
-        ai_prompt.push_str(&format!("执行计划：\n{}\n\n", result.query_plan.as_deref().unwrap_or("无")));
-        ai_prompt.push_str("请按照以下格式给出优化建议：\n");
-        ai_prompt.push_str("1. SQL优化建议：\n");
-        ai_prompt.push_str("2. 索引优化建议：\n");
-        ai_prompt.push_str("3. 执行计划解释：\n");
-        ai_prompt.push_str("4. 其他优化建议：\n");
         
         // 调用AI优化SQL
         match ai_service.optimize_sql(&payload.sql, Some(&database_type)).await {
@@ -1635,8 +2317,8 @@ async fn get_templates(
     // 过滤模板类型
     let filtered_templates: Vec<&PromptTemplate> = if let Some(tt) = template_type {
         templates.iter()
-            .filter(|t| t.template_id.contains(&tt.as_str()))
-            .map(|t| *t)
+            .filter(|t| t.template_id.contains(tt.as_str()))
+            .copied()
             .collect()
     } else {
         templates.into_iter().collect()
@@ -1650,13 +2332,13 @@ async fn get_templates(
         
         // 根据模板ID确定类型
         let template_type = if t.template_id.contains("sql_generation") {
-            TemplateType::SqlGeneration
+            TemplateType::Generation
         } else if t.template_id.contains("sql_explain") {
-            TemplateType::SqlExplain
+            TemplateType::Explain
         } else if t.template_id.contains("sql_optimize") {
-            TemplateType::SqlOptimize
+            TemplateType::Optimize
         } else {
-            TemplateType::SqlGeneration
+            TemplateType::Generation
         };
         
         TemplateResponse {
@@ -1690,13 +2372,13 @@ async fn get_template(
         
         // 根据模板ID确定类型
         let template_type = if template_id.contains("sql_generation") {
-            TemplateType::SqlGeneration
+            TemplateType::Generation
         } else if template_id.contains("sql_explain") {
-            TemplateType::SqlExplain
+            TemplateType::Explain
         } else if template_id.contains("sql_optimize") {
-            TemplateType::SqlOptimize
+            TemplateType::Optimize
         } else {
-            TemplateType::SqlGeneration
+            TemplateType::Generation
         };
         
         let response = TemplateResponse {
@@ -1822,13 +2504,13 @@ async fn update_template(
             
             // 根据模板ID确定类型
             let template_type = if template_id.contains("sql_generation") {
-                TemplateType::SqlGeneration
+                TemplateType::Generation
             } else if template_id.contains("sql_explain") {
-                TemplateType::SqlExplain
+                TemplateType::Explain
             } else if template_id.contains("sql_optimize") {
-                TemplateType::SqlOptimize
+                TemplateType::Optimize
             } else {
-                TemplateType::SqlGeneration
+                TemplateType::Generation
             };
             
             let response = TemplateResponse {
@@ -1962,7 +2644,7 @@ async fn set_default_template(
 // ========== 连接配置管理API ==========
 
 use crate::models::{DatabaseConnection, ConnectionRequest, ConnectionTestRequest, ConnectionTestResponse, 
-    ActivateConnectionResponse, DatabaseInfo};
+    ActivateConnectionResponse};
 
 /// 获取所有连接配置
 async fn list_connections(
@@ -2145,6 +2827,11 @@ async fn test_connection(
                         let pass = req.password.as_deref().unwrap_or("");
                         format!("postgresql://{}:{}@{}:{}/{}", user, pass, host, port, db_name)
                     }
+                    "mongodb" => {
+                        let user = req.username.as_deref().unwrap_or("root");
+                        let pass = req.password.as_deref().unwrap_or("");
+                        format!(r#"mongodb://{}:{}@{}:{}/{}?authSource=admin"#, user, pass, host, port, db_name)
+                    }
                     _ => {
                         return Err((
                             StatusCode::BAD_REQUEST,
@@ -2181,6 +2868,11 @@ async fn test_connection(
                 let pass = req.password.as_deref().unwrap_or("");
                 format!("postgresql://{}:{}@{}:{}/{}", user, pass, host, port, db_name)
             }
+            "mongodb" => {
+                let user = req.username.as_deref().unwrap_or("root");
+                let pass = req.password.as_deref().unwrap_or("");
+                format!(r#"mongodb://{}:{}@{}:{}/{}?authSource=admin"#, user, pass, host, port, db_name)
+            }
             _ => {
                 return Err((
                     StatusCode::BAD_REQUEST,
@@ -2209,9 +2901,7 @@ async fn test_connection(
             use sqlx::mysql::{MySqlConnectOptions, MySqlConnection, MySqlSslMode};
             use sqlx::Connection;
             use std::str::FromStr;
-            use std::time::Duration;
-            
-            log::info!("准备连接到MySQL: {}", conn_str.replace(&req.password.as_deref().unwrap_or(""), "***"));
+            log::info!("准备连接到MySQL: {}", conn_str.replace(req.password.as_deref().unwrap_or(""), "***"));
             
             // 解析连接选项并配置
             let options = MySqlConnectOptions::from_str(&conn_str)
@@ -2309,6 +2999,84 @@ async fn test_connection(
                         server_version: None,
                         response_time_ms: start.elapsed().as_millis(),
                     }))
+                }
+            }
+        }
+        "mongodb" => {
+            use mongodb::Client;
+            log::info!("准备连接到MongoDB: {}", conn_str.replace(req.password.as_deref().unwrap_or(""), "***"));
+            
+            // 尝试连接MongoDB
+            match Client::with_uri_str(&conn_str).await {
+                Ok(client) => {
+                    log::info!("MongoDB客户端创建成功！");
+                    
+                    // 从连接字符串提取数据库名称
+                    let db_name = if let Some(db_part) = conn_str.split('/').nth(3) {
+                        db_part.split('?').next().unwrap_or("admin").to_string()
+                    } else {
+                        "admin".to_string()
+                    };
+                    
+                    // 测试数据库连接
+                    let database = client.database(&db_name);
+                    match database.run_command(mongodb::bson::doc! { "ping": 1 }, None).await {
+                        Ok(_) => {
+                            log::info!("MongoDB连接成功！");
+                            
+                            // 获取MongoDB服务器信息
+                            let server_info = database.run_command(mongodb::bson::doc! { "buildinfo": 1 }, None).await.ok();
+                            let server_version = server_info.and_then(|info| info.get("version").and_then(|v| v.as_str()).map(|s| s.to_string()));
+                            
+                            let response_time = start.elapsed().as_millis();
+                            
+                            let response = ConnectionTestResponse {
+                                success: true,
+                                message: "连接成功".to_string(),
+                                server_version: server_version.clone(),
+                                response_time_ms: response_time,
+                            };
+                            
+                            info!("[API] POST /api/connections/test - 响应成功: 连接成功, 版本={:?}, 耗时={}ms", 
+                                server_version, response_time);
+                            
+                            if let Ok(resp_json) = serde_json::to_string(&response) {
+                                log::info!("[API] POST /api/connections/test - 响应体: {}", resp_json);
+                            }
+                            
+                            Ok(Json(response))
+                        }
+                        Err(e) => {
+                            let response_time = start.elapsed().as_millis();
+                            error!("[API] POST /api/connections/test - MongoDB连接测试失败: {} (详细: {:?})", e, e);
+                            info!("[API] POST /api/connections/test - 响应: 连接失败, 耗时={}ms", response_time);
+                            let response = ConnectionTestResponse {
+                                success: false,
+                                message: format!("连接失败: {} (详细: {:?})", e, e),
+                                server_version: None,
+                                response_time_ms: response_time,
+                            };
+                            if let Ok(resp_json) = serde_json::to_string(&response) {
+                                log::info!("[API] POST /api/connections/test - 响应体: {}", resp_json);
+                            }
+                            Ok(Json(response))
+                        }
+                    }
+                }
+                Err(e) => {
+                    let response_time = start.elapsed().as_millis();
+                    error!("[API] POST /api/connections/test - MongoDB客户端创建失败: {} (详细: {:?})", e, e);
+                    info!("[API] POST /api/connections/test - 响应: 连接失败, 耗时={}ms", response_time);
+                    let response = ConnectionTestResponse {
+                        success: false,
+                        message: format!("连接失败: {} (详细: {:?})", e, e),
+                        server_version: None,
+                        response_time_ms: response_time,
+                    };
+                    if let Ok(resp_json) = serde_json::to_string(&response) {
+                        log::info!("[API] POST /api/connections/test - 响应体: {}", resp_json);
+                    }
+                    Ok(Json(response))
                 }
             }
         }
@@ -2428,4 +3196,92 @@ async fn clear_query_history(
             })
         ))
     }
+}
+
+// ========== AI配置管理API ==========
+
+/// AI配置请求结构
+#[derive(Deserialize)]
+struct AiConfigRequest {
+    base_url: String,
+    api_key: String,
+    model: String,
+}
+
+/// 保存AI配置
+async fn save_ai_config(
+    Extension(storage): Extension<LocalStorageManager>,
+    Json(payload): Json<AiConfigRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ModelErrorResponse>)> {
+    log::info!("[API] POST /api/ai/config - 保存AI配置请求");
+    
+    // 保存配置到本地存储
+    storage.set_app_setting("ai_api_base_url", &payload.base_url).await
+        .map_err(|e| (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ModelErrorResponse {
+                error: "database_error".to_string(),
+                message: format!("保存AI配置失败: {}", e),
+                details: None,
+            })
+        ))?;
+    
+    storage.set_app_setting("ai_api_key", &payload.api_key).await
+        .map_err(|e| (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ModelErrorResponse {
+                error: "database_error".to_string(),
+                message: format!("保存AI配置失败: {}", e),
+                details: None,
+            })
+        ))?;
+    
+    storage.set_app_setting("ai_model", &payload.model).await
+        .map_err(|e| (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ModelErrorResponse {
+                error: "database_error".to_string(),
+                message: format!("保存AI配置失败: {}", e),
+                details: None,
+            })
+        ))?;
+    
+    log::info!("[API] POST /api/ai/config - AI配置保存成功");
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "AI配置保存成功"
+    })))
+}
+
+/// 获取AI配置
+async fn get_ai_config(
+    Extension(storage): Extension<LocalStorageManager>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ModelErrorResponse>)> {
+    log::info!("[API] GET /api/ai/config - 获取AI配置请求");
+    
+    // 从本地存储获取配置
+    let base_url = match storage.get_app_setting("ai_api_base_url").await {
+        Ok(Some(url)) => url,
+        Ok(None) => "https://api.openai.com/v1".to_string(),
+        Err(_) => "https://api.openai.com/v1".to_string(),
+    };
+    
+    let api_key = match storage.get_app_setting("ai_api_key").await {
+        Ok(Some(key)) => key,
+        Ok(None) => "".to_string(),
+        Err(_) => "".to_string(),
+    };
+    
+    let model = match storage.get_app_setting("ai_model").await {
+        Ok(Some(m)) => m,
+        Ok(None) => "gpt-4o-mini".to_string(),
+        Err(_) => "gpt-4o-mini".to_string(),
+    };
+    
+    Ok(Json(serde_json::json!({
+        "base_url": base_url,
+        "api_key": api_key,
+        "model": model
+    })))
 }
