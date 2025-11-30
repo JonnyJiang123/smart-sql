@@ -1,5 +1,6 @@
 use sqlx::{Pool, Sqlite, SqlitePool, Row};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::HashMap;
 use crate::models::{DatabaseConnection, ConnectionRequest, QueryHistory, SqlFavorite};
 
 /// 本地SQLite存储管理器
@@ -72,7 +73,7 @@ impl LocalStorageManager {
         .bind(&req.password)
         .bind(&req.file_path)
         .bind(&req.connection_string)
-        .bind(&req.environment.unwrap_or_else(|| "development".to_string()))
+        .bind(req.environment.unwrap_or_else(|| "development".to_string()))
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -122,7 +123,7 @@ impl LocalStorageManager {
         .bind(&req.password)
         .bind(&req.file_path)
         .bind(&req.connection_string)
-        .bind(&req.environment.unwrap_or_else(|| "development".to_string()))
+        .bind(req.environment.unwrap_or_else(|| "development".to_string()))
         .bind(now)
         .bind(id)
         .execute(&self.pool)
@@ -174,6 +175,7 @@ impl LocalStorageManager {
     // ========== 查询历史管理 ==========
     
     /// 添加查询历史记录
+    #[allow(dead_code)]
     pub async fn add_query_history(
         &self,
         connection_id: Option<i64>,
@@ -205,7 +207,8 @@ impl LocalStorageManager {
         self.get_query_history(result.last_insert_rowid()).await
     }
     
-    /// 获取单条历史记录
+    /// 获取查询历史记录
+    #[allow(dead_code)]
     pub async fn get_query_history(&self, id: i64) -> Result<QueryHistory, sqlx::Error> {
         sqlx::query_as::<_, QueryHistory>(
             "SELECT * FROM query_history WHERE id = ?"
@@ -245,7 +248,8 @@ impl LocalStorageManager {
         }
     }
     
-    /// 获取收藏的历史记录
+    /// 获取收藏查询列表
+    #[allow(dead_code)]
     pub async fn list_favorite_queries(&self) -> Result<Vec<QueryHistory>, sqlx::Error> {
         sqlx::query_as::<_, QueryHistory>(
             "SELECT * FROM query_history WHERE is_favorite = 1 ORDER BY executed_at DESC"
@@ -283,6 +287,7 @@ impl LocalStorageManager {
     // ========== SQL收藏夹管理 ==========
     
     /// 创建SQL收藏
+    #[allow(dead_code)]
     pub async fn create_sql_favorite(
         &self,
         name: &str,
@@ -323,7 +328,8 @@ impl LocalStorageManager {
         .await
     }
     
-    /// 获取收藏列表
+    /// 获取SQL收藏列表
+    #[allow(dead_code)]
     pub async fn list_sql_favorites(&self, category: Option<&str>) -> Result<Vec<SqlFavorite>, sqlx::Error> {
         match category {
             Some(cat) => {
@@ -344,7 +350,8 @@ impl LocalStorageManager {
         }
     }
     
-    /// 更新收藏使用统计
+    /// 增加收藏使用次数
+    #[allow(dead_code)]
     pub async fn increment_favorite_usage(&self, id: i64) -> Result<(), sqlx::Error> {
         let now = Self::current_timestamp();
         sqlx::query(
@@ -357,7 +364,8 @@ impl LocalStorageManager {
         Ok(())
     }
     
-    /// 删除收藏
+    /// 删除SQL收藏
+    #[allow(dead_code)]
     pub async fn delete_sql_favorite(&self, id: i64) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM sql_favorites WHERE id = ?")
             .bind(id)
@@ -366,7 +374,8 @@ impl LocalStorageManager {
         Ok(())
     }
     
-    /// 获取所有分类
+    /// 获取收藏分类列表
+    #[allow(dead_code)]
     pub async fn list_favorite_categories(&self) -> Result<Vec<String>, sqlx::Error> {
         let rows = sqlx::query_as::<_, (Option<String>,)>(
             "SELECT DISTINCT category FROM sql_favorites WHERE category IS NOT NULL ORDER BY category"
@@ -375,6 +384,60 @@ impl LocalStorageManager {
         .await?;
         
         Ok(rows.into_iter().filter_map(|(cat,)| cat).collect())
+    }
+    
+    // ========== 应用设置管理 ==========
+    
+    /// 获取应用设置
+    pub async fn get_app_setting(&self, key: &str) -> Result<Option<String>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT value FROM app_settings WHERE key = ?"
+        )
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await?;
+        
+        Ok(row.map(|r| r.get(0)))
+    }
+    
+    /// 设置应用配置
+    #[allow(dead_code)]
+    pub async fn set_app_setting(&self, key: &str, value: &str) -> Result<(), sqlx::Error> {
+        let now = Self::current_timestamp();
+        
+        sqlx::query(
+            r#"
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            "#
+        )
+        .bind(key)
+        .bind(value)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    /// 获取所有应用配置
+    #[allow(dead_code)]
+    pub async fn get_all_app_settings(&self) -> Result<HashMap<String, String>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT key, value FROM app_settings"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        
+        let mut settings = HashMap::new();
+        for row in rows {
+            let key: String = row.get(0);
+            let value: String = row.get(1);
+            settings.insert(key, value);
+        }
+        
+        Ok(settings)
     }
 }
 

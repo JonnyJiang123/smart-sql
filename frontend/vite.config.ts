@@ -7,10 +7,16 @@ export default defineConfig({
   plugins: [svelte()],
   resolve: {
     alias: {
-      $lib: fileURLToPath(new URL('./src/lib', import.meta.url))
-    }
+      $lib: fileURLToPath(new URL("./src/lib", import.meta.url)),
+    },
   },
   server: {
-    port: 5173
-  }
-})
+    port: 5173,
+    proxy: {
+      "/api": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+    },
+  },
+});

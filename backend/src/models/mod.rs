@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 // 数据库表信息模型
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct TableInfo {
     pub name: String,
     pub schema: Option<String>,
@@ -12,6 +13,7 @@ pub struct TableInfo {
 
 // 数据库列信息模型
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+#[allow(dead_code)]
 pub struct ColumnInfo {
     pub name: String,
     pub data_type: String,
@@ -22,6 +24,7 @@ pub struct ColumnInfo {
 
 // 表结构详细信息
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct TableSchema {
     pub table: TableInfo,
     pub columns: Vec<ColumnInfo>,
@@ -30,6 +33,7 @@ pub struct TableSchema {
 
 // 外键信息
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+#[allow(dead_code)]
 pub struct ForeignKeyInfo {
     pub constraint_name: String,
     pub column_name: String,
@@ -91,6 +95,7 @@ pub struct QueryPerformance {
 }
 
 impl QueryPerformance {
+    #[allow(dead_code)]
     pub fn new(query_time_ms: u128, fetch_time_ms: u128, rows_read: usize, rows_returned: usize) -> Self {
         let total_time_ms = query_time_ms + fetch_time_ms;
         let is_slow_query = total_time_ms > 1000;
@@ -125,7 +130,7 @@ impl QueryPerformance {
 pub struct DatabaseConnection {
     pub id: Option<i64>,
     pub name: String,
-    pub db_type: String,              // sqlite, mysql, postgresql
+    pub db_type: String,              // sqlite, mysql, postgresql, mongodb
     pub host: Option<String>,
     pub port: Option<i32>,
     pub database_name: Option<String>,
@@ -197,6 +202,7 @@ pub struct QueryHistory {
 
 // SQL收藏记录模型
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
+#[allow(dead_code)]
 pub struct SqlFavorite {
     pub id: Option<i64>,
     pub name: String,
@@ -212,6 +218,7 @@ pub struct SqlFavorite {
 
 // 数据库连接配置模型（遗留，保持向后兼容）
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct DatabaseConnectionConfig {
     pub id: Option<String>,
     pub name: String,
@@ -275,19 +282,19 @@ pub struct ErrorResponse {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum TemplateType {
     #[serde(rename = "sql_generation")]
-    SqlGeneration,
+    Generation,
     #[serde(rename = "sql_explain")]
-    SqlExplain,
+    Explain,
     #[serde(rename = "sql_optimize")]
-    SqlOptimize,
+    Optimize,
 }
 
 impl TemplateType {
     pub fn as_str(&self) -> &str {
         match self {
-            TemplateType::SqlGeneration => "sql_generation",
-            TemplateType::SqlExplain => "sql_explain",
-            TemplateType::SqlOptimize => "sql_optimize",
+            TemplateType::Generation => "sql_generation",
+            TemplateType::Explain => "sql_explain",
+            TemplateType::Optimize => "sql_optimize",
         }
     }
 }
@@ -411,18 +418,18 @@ pub struct ActivateConnectionResponse {
 pub struct TableColumn {
     pub name: String,
     #[serde(rename = "dataType")]
-    pub dataType: Option<String>,
+    pub data_type: Option<String>,
     #[serde(rename = "type")]
     pub type_: Option<String>,
     pub nullable: Option<bool>,
     #[serde(rename = "isNullable")]
-    pub isNullable: Option<bool>,
+    pub is_nullable: Option<bool>,
     #[serde(rename = "isPrimaryKey")]
-    pub isPrimaryKey: Option<bool>,
+    pub is_primary_key: Option<bool>,
     #[serde(rename = "default")]
     pub default_: Option<String>,
     #[serde(rename = "defaultValue")]
-    pub defaultValue: Option<String>,
+    pub default_value: Option<String>,
     pub comment: Option<String>,
     pub description: Option<String>,
 }
@@ -436,7 +443,7 @@ pub struct TableIndex {
     pub columns: Vec<String>,
     pub unique: Option<bool>,
     #[serde(rename = "isPrimaryKey")]
-    pub isPrimaryKey: Option<bool>,
+    pub is_primary_key: Option<bool>,
     pub method: Option<String>,
 }
 

@@ -37,12 +37,6 @@
     document.removeEventListener('mouseup', handleMouseUp);
   }
 
-  // 键盘控制弹窗关闭
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      showConnectionManager = false;
-    }
-  }
 
 </script>
 
@@ -117,14 +111,11 @@
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div 
     class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" 
-    on:click={() => showConnectionManager = false}
-    on:keydown={handleKeydown}
   >
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div 
       class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full max-h-[80vh] overflow-hidden" 
-      on:click|stopPropagation
     >
       <div class="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
         <h2 id="connection-manager-title" class="text-lg font-semibold text-gray-900 dark:text-white">连接管理</h2>

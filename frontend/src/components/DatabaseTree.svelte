@@ -63,18 +63,18 @@
           name: dbName,
           type: 'database',
           expanded: true,
-          children: dbInfo.tables.map(table => ({
-            id: `table-${connection.id}-${table}`,
-            name: table,
-            type: 'table',
-            icon: '📋',
-            expanded: false,
-            connectionId: connection.id, // 存储连接ID
-            children: [
+          children: dbInfo.tables.map(table => {
+            // 根据数据库类型调整节点结构
+            const isMongoDB = connection.db_type === 'mongodb';
+            const nodeType = isMongoDB ? 'collection' : 'table';
+            const icon = isMongoDB ? '📁' : '📋';
+            
+            // MongoDB没有传统的外键和触发器概念
+            const children = isMongoDB ? [
               {
                 id: `columns-folder-${connection.id}-${table}`,
                 name: '字段',
-                type: 'columns-folder',
+                type: 'columns-folder' as const,
                 icon: '📄',
                 isFolder: true,
                 expanded: false,
@@ -83,7 +83,26 @@
               {
                 id: `indexes-folder-${connection.id}-${table}`,
                 name: '索引',
-                type: 'indexes-folder',
+                type: 'indexes-folder' as const,
+                icon: '🔑',
+                isFolder: true,
+                expanded: false,
+                children: []
+              }
+            ] : [
+              {
+                id: `columns-folder-${connection.id}-${table}`,
+                name: '字段',
+                type: 'columns-folder' as const,
+                icon: '📄',
+                isFolder: true,
+                expanded: false,
+                children: []
+              },
+              {
+                id: `indexes-folder-${connection.id}-${table}`,
+                name: '索引',
+                type: 'indexes-folder' as const,
                 icon: '🔑',
                 isFolder: true,
                 expanded: false,
@@ -92,7 +111,7 @@
               {
                 id: `foreignkeys-folder-${connection.id}-${table}`,
                 name: '外键',
-                type: 'foreignkeys-folder',
+                type: 'foreignkeys-folder' as const,
                 icon: '🔗',
                 isFolder: true,
                 expanded: false,
@@ -101,14 +120,24 @@
               {
                 id: `triggers-folder-${connection.id}-${table}`,
                 name: '触发器',
-                type: 'triggers-folder',
+                type: 'triggers-folder' as const,
                 icon: '⚡',
                 isFolder: true,
                 expanded: false,
                 children: []
               }
-            ]
-          }))
+            ];
+            
+            return {
+              id: `${nodeType}-${connection.id}-${table}`,
+              name: table,
+              type: nodeType,
+              icon: icon,
+              expanded: false,
+              connectionId: connection.id, // 存储连接ID
+              children: children
+            };
+          })
         }
       ]
     };
@@ -219,10 +248,10 @@
   }
 </script>
 
-<div class="database-tree h-full overflow-y-auto bg-white dark:bg-gray-800">
+<div class="database-tree h-full overflow-y-auto bg-gray-900 border-r border-gray-800">
   {#if isLoading}
     <div class="p-4 flex items-center justify-center">
-      <div class="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
+      <div class="flex items-center space-x-2 text-gray-400">
         <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -231,7 +260,7 @@
       </div>
     </div>
   {:else if errorMessage}
-    <div class="m-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 rounded-md text-sm">
+    <div class="m-3 p-3 bg-red-900/30 border border-red-800 text-red-400 rounded-md text-sm">
       <div class="font-medium mb-1">⚠️ 加载失败</div>
       <div class="text-xs">{errorMessage}</div>
     </div>
@@ -243,13 +272,13 @@
     </div>
   {:else}
     <div class="p-4 text-center">
-      <div class="text-gray-400 dark:text-gray-500 mb-2">
+      <div class="text-gray-500 mb-2">
         <svg class="w-12 h-12 mx-auto opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"></path>
         </svg>
       </div>
-      <p class="text-sm text-gray-500 dark:text-gray-400 mb-1">没有活动连接</p>
-      <p class="text-xs text-gray-400 dark:text-gray-500">点击顶部按钮创建连接</p>
+      <p class="text-sm text-gray-400 mb-1">没有活动连接</p>
+      <p class="text-xs text-gray-500">点击顶部按钮创建连接</p>
     </div>
   {/if}
 </div>

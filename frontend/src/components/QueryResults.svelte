@@ -1,4 +1,4 @@
-﻿<script lang="ts">
+<script lang="ts">
   import ExcelJS from 'exceljs';
   import { tick } from 'svelte';
   import type { SqlQueryResult } from '../types';
@@ -306,16 +306,16 @@
   }
 </script>
 
-<div class="query-results h-full flex flex-col bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+<div class="query-results h-full flex flex-col bg-gray-900 border border-gray-700 rounded-lg overflow-hidden">
   <!-- 工具栏 -->
-  <div class="flex items-center justify-between p-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+  <div class="flex items-center justify-between p-3 border-b border-gray-700 bg-gray-800">
     <div class="flex items-center space-x-3">
       <!-- 结果统计 -->
       {#if result}
-        <div class="text-sm text-gray-600 dark:text-gray-400">
+        <div class="text-sm text-gray-400">
           <span class="font-semibold">{sortedRows.length}</span> 行
           {#if result.execution_time_ms}
-            · <span class="text-green-600 dark:text-green-400">{result.execution_time_ms}ms</span>
+            · <span class="text-green-400">{result.execution_time_ms}ms</span>
           {/if}
         </div>
       {/if}
@@ -326,12 +326,12 @@
           type="text"
           bind:value={filterText}
           placeholder="搜索..."
-          class="w-48 px-3 py-1.5 text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          class="w-48 px-3 py-1.5 text-sm bg-gray-700 text-gray-300 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         {#if filterText}
           <button
             on:click={() => filterText = ''}
-            class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300"
             title="清除搜索"
           >
             ✕
@@ -345,7 +345,7 @@
       <button
         on:click={copyToClipboard}
         disabled={!result || paginatedRows.length === 0}
-        class="px-3 py-1.5 bg-gray-600 text-white text-sm rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        class="px-3 py-1.5 bg-gray-700 text-white text-sm rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         title="复制到剪贴板"
       >
         📋 复制
@@ -363,22 +363,22 @@
         </button>
         
         {#if showExportMenu}
-          <div class="absolute right-0 mt-2 w-32 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-xl z-20">
+          <div class="absolute right-0 mt-2 w-32 bg-gray-800 border border-gray-700 rounded-md shadow-xl z-20">
             <button
               on:click={() => exportData('csv')}
-              class="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+              class="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700"
             >
               CSV
             </button>
             <button
               on:click={() => exportData('json')}
-              class="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+              class="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700"
             >
               JSON
             </button>
             <button
               on:click={() => exportData('excel')}
-              class="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+              class="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700"
             >
               Excel
             </button>
@@ -388,18 +388,18 @@
     </div>
     
     {#if isExporting}
-      <div class="flex items-center space-x-3 text-xs text-gray-600 dark:text-gray-400">
+      <div class="flex items-center space-x-3 text-xs text-gray-400">
         <span class="font-medium">
           {activeExportFormat ? `正在导出 ${exportFormatLabels[activeExportFormat]}` : '正在导出'}
         </span>
-        <div class="w-32 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+        <div class="w-32 h-1.5 bg-gray-700 rounded-full overflow-hidden">
           <div
-            class="h-full bg-blue-600 dark:bg-blue-400 transition-all duration-150"
+            class="h-full bg-blue-400 transition-all duration-150"
             style={`width: ${exportProgress}%;`}
           ></div>
         </div>
         {#if exportStatus}
-          <span class="text-gray-500 dark:text-gray-500">{exportStatus}</span>
+          <span class="text-gray-500">{exportStatus}</span>
         {/if}
       </div>
     {/if}
@@ -449,15 +449,14 @@
         <!-- 表格数据 -->
         <tbody>
           {#each paginatedRows as row}
-            <tr class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+            <tr class="border-b border-gray-700 hover:bg-gray-800/50 transition-colors">
               {#each row as cell}
                 {@const isNull = cell === null || cell === undefined}
                 <td 
-                  class="px-4 py-2 text-sm border-r border-gray-200 dark:border-gray-700 last:border-r-0"
-                  class:text-gray-400={isNull}
+                  class="px-4 py-2 text-sm border-r border-gray-700 last:border-r-0"
+                  class:text-gray-500={isNull}
                   class:italic={isNull}
-                  class:text-gray-900={!isNull}
-                  class:dark:text-gray-100={!isNull}
+                  class:text-white={!isNull}
                   style="text-align: center;"
                   title={formatCellValue(cell)}
                 >
@@ -491,16 +490,16 @@
   
   <!-- 分页控制 -->
   {#if result && result.rows.length > 0 && totalPages > 1}
-    <div class="flex items-center justify-between px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+    <div class="flex items-center justify-between px-4 py-3 border-t border-gray-700 bg-gray-800">
       <div class="flex items-center space-x-2">
-        <span class="text-sm text-gray-600 dark:text-gray-400">
+        <span class="text-sm text-gray-400">
           显示 {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, sortedRows.length)} / 共{sortedRows.length} 行
         </span>
         
         <select
           bind:value={pageSize}
           on:change={() => currentPage = 1}
-          class="px-2 py-1 text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          class="px-2 py-1 text-sm bg-gray-700 text-gray-300 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value={25}>25 / 页</option>
           <option value={50}>50 / 页</option>
@@ -513,7 +512,7 @@
         <button
           on:click={goToFirstPage}
           disabled={currentPage === 1}
-          class="px-2 py-1 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          class="px-2 py-1 text-sm bg-gray-700 text-gray-300 border border-gray-600 rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
           title="首页"
         >
           ⏮
@@ -522,27 +521,27 @@
         <button
           on:click={goToPreviousPage}
           disabled={currentPage === 1}
-          class="px-3 py-1 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          class="px-3 py-1 text-sm bg-gray-700 text-gray-300 border border-gray-600 rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
           title="上一页"
         >
           ◀ 上一页
         </button>
         
-        <span class="text-sm text-gray-600 dark:text-gray-400">
+        <span class="text-sm text-gray-400">
           第
           <input
             type="number"
             bind:value={currentPage}
             min="1"
             max={totalPages}
-            class="w-16 px-2 py-1 text-center bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            class="w-16 px-2 py-1 text-center bg-gray-700 text-gray-300 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           /> / {totalPages} 页
         </span>
         
         <button
           on:click={goToNextPage}
           disabled={currentPage === totalPages}
-          class="px-3 py-1 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          class="px-3 py-1 text-sm bg-gray-700 text-gray-300 border border-gray-600 rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
           title="下一页"
         >
           下一页 ▶
@@ -551,7 +550,7 @@
         <button
           on:click={goToLastPage}
           disabled={currentPage === totalPages}
-          class="px-2 py-1 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          class="px-2 py-1 text-sm bg-gray-700 text-gray-300 border border-gray-600 rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
           title="末页"
         >
           ⏭

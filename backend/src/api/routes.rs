@@ -316,118 +316,55 @@ fn split_params(s: &str) -> Vec<&str> {
     params
 }
 
-// 辅助函数：将MongoDB Shell语法转换为有效的JSON字符串
-fn mongodb_shell_to_json(shell_str: &str) -> Result<String, String> {
-    let mut json_str = String::new();
-    let mut in_string = false;
-    let mut string_delimiter = '"';
-    let mut in_key = true;
-    let mut depth = 0;
+// 辅助函数：解析MongoDB投影参数，支持MongoDB Shell语法，如 { name: 1, _id: 0 }
+fn parse_mongodb_projection(projection_str: &str) -> Result<mongodb::bson::Document, String> {
+    // 从第一性原理出发，直接解析投影字符串
+    // 支持的格式：{ name: 1, _id: 0 }
+    let mut doc = mongodb::bson::Document::new();
     
-    for c in shell_str.chars() {
-        match c {
-            '"' | '\'' => {
-                if !in_string {
-                    // 开始字符串
-                    in_string = true;
-                    string_delimiter = c;
-                    json_str.push('"');
-                } else if c == string_delimiter {
-                    // 结束字符串
-                    in_string = false;
-                    json_str.push('"');
-                } else {
-                    // 字符串内部的引号，直接添加
-                    json_str.push(c);
-                }
-            }
-            ':' => {
-                if !in_string {
-                    // 键值分隔符，结束键，开始值
-                    in_key = false;
-                    json_str.push(':');
-                } else {
-                    // 字符串内部的冒号，直接添加
-                    json_str.push(c);
-                }
-            }
-            '{' | '[' => {
-                if !in_string {
-                    // 开始对象或数组，增加深度
-                    depth += 1;
-                    json_str.push(c);
-                    in_key = true;
-                } else {
-                    // 字符串内部的括号，直接添加
-                    json_str.push(c);
-                }
-            }
-            '}' | ']' => {
-                if !in_string {
-                    // 结束对象或数组，减少深度
-                    depth -= 1;
-                    json_str.push(c);
-                    in_key = true;
-                } else {
-                    // 字符串内部的括号，直接添加
-                    json_str.push(c);
-                }
-            }
-            ',' => {
-                if !in_string {
-                    // 键值对分隔符，开始新的键
-                    json_str.push(',');
-                    in_key = true;
-                } else {
-                    // 字符串内部的逗号，直接添加
-                    json_str.push(c);
-                }
-            }
-            ' ' | '\t' | '\n' => {
-                if in_string {
-                    // 字符串内部的空格，直接添加
-                    json_str.push(c);
-                } else {
-                    // 字符串外部的空格，跳过
-                }
-            }
-            _ => {
-                if !in_string {
-                    if in_key {
-                        // 键名的字符，添加引号
-                        json_str.push('"');
-                        json_str.push(c);
-                        in_key = false;
+    // 移除首尾的空格和大括号
+    let trimmed = projection_str.trim().trim_matches(|c| c == '{' || c == '}').trim();
+    if trimmed.is_empty() {
+        return Ok(doc);
+    }
+    
+    // 按逗号分割键值对
+    let pairs: Vec<&str> = trimmed.split(',').map(|s| s.trim()).collect();
+    
+    for pair in pairs {
+        // 按冒号分割键和值
+        if let Some((key, value)) = pair.split_once(':') {
+            let key_trimmed = key.trim();
+            let value_trimmed = value.trim();
+            
+            // 解析值
+            let bson_value = match value_trimmed {
+                "1" => mongodb::bson::Bson::Int32(1),
+                "0" => mongodb::bson::Bson::Int32(0),
+                "true" => mongodb::bson::Bson::Boolean(true),
+                "false" => mongodb::bson::Bson::Boolean(false),
+                _ => {
+                    // 尝试解析为其他类型
+                    if let Ok(num) = value_trimmed.parse::<i32>() {
+                        mongodb::bson::Bson::Int32(num)
+                    } else if let Ok(num) = value_trimmed.parse::<f64>() {
+                        mongodb::bson::Bson::Double(num)
                     } else {
-                        // 值的字符，直接添加
-                        json_str.push(c);
+                        // 视为字符串
+                        mongodb::bson::Bson::String(value_trimmed.to_string())
                     }
-                } else {
-                    // 字符串内部的字符，直接添加
-                    json_str.push(c);
                 }
-            }
+            };
+            
+            // 添加到文档
+            doc.insert(key_trimmed, bson_value);
         }
     }
     
-    Ok(json_str)
+    Ok(doc)
 }
 
-// 辅助函数：解析MongoDB投影参数，支持MongoDB Shell语法，如 { name: 1, _id: 0 }
-fn parse_mongodb_projection(projection_str: &str) -> Result<mongodb::bson::Document, String> {
-    // 将MongoDB Shell语法转换为有效的JSON字符串
-    let json_str = mongodb_shell_to_json(projection_str)?;
-    
-    // 使用serde_json解析JSON字符串
-    let json_value = serde_json::from_str::<serde_json::Value>(&json_str)
-        .map_err(|e| format!("JSON解析失败: {}", e))?;
-    
-    // 将serde_json::Value转换为bson::Document
-    let bson_doc = mongodb::bson::to_document(&json_value)
-        .map_err(|e| format!("转换为BSON失败: {}", e))?;
-    
-    Ok(bson_doc)
-}
+
 
 // 辅助函数：为SQL语句添加LIMIT限制
 // 如果没有LIMIT，添加默认LIMIT 200

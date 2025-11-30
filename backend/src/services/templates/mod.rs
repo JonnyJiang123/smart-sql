@@ -19,12 +19,7 @@ impl std::fmt::Display for TemplateError {
 
 impl std::error::Error for TemplateError {}
 
-// 提示词模板类型
-enum TemplateType {
-    SqlGeneration,
-    SqlExplain,
-    SqlOptimize,
-}
+
 
 // 提示词模板结构体
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,16 +47,18 @@ impl TemplateManager {
             default_templates: HashMap::new(),
         };
         
-        // 初始化默认模板
+        // 加载默认模板
         manager.initialize_default_templates();
         
         manager
     }
     
+    
+    
     // 初始化默认提示词模板
     fn initialize_default_templates(&mut self) {
         // SQL生成模板
-        self.add_template(PromptTemplate {
+        let _ = self.add_template(PromptTemplate {
             template_id: "sql_generation_default".to_string(),
             name: "默认SQL生成模板".to_string(),
             description: "用于从自然语言生成SQL查询的标准模板".to_string(),
@@ -73,7 +70,7 @@ impl TemplateManager {
         });
         
         // SQL解释模板
-        self.add_template(PromptTemplate {
+        let _ = self.add_template(PromptTemplate {
             template_id: "sql_explain_default".to_string(),
             name: "默认SQL解释模板".to_string(),
             description: "用于解释SQL查询含义的标准模板".to_string(),
@@ -85,7 +82,7 @@ impl TemplateManager {
         });
         
         // SQL优化模板
-        self.add_template(PromptTemplate {
+        let _ = self.add_template(PromptTemplate {
             template_id: "sql_optimize_default".to_string(),
             name: "默认SQL优化模板".to_string(),
             description: "用于优化SQL查询的标准模板".to_string(),
@@ -168,6 +165,7 @@ impl TemplateManager {
     }
     
     // 获取默认模板
+    #[allow(dead_code)]
     pub fn get_default_template(&self, template_type: &str) -> Option<&PromptTemplate> {
         if let Some(default_id) = self.default_templates.get(template_type) {
             self.get_template(default_id)
@@ -177,6 +175,7 @@ impl TemplateManager {
     }
     
     // 渲染模板，替换变量
+    #[allow(dead_code)]
     pub fn render_template(&self, template_id: &str, variables: &HashMap<String, String>) -> Result<String, String> {
         // 获取模板
         let template = match self.get_template(template_id) {
@@ -229,6 +228,13 @@ impl TemplateManager {
         }
         
         Ok(result)
+    }
+}
+
+// 为 TemplateManager 添加 Default 实现
+impl Default for TemplateManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

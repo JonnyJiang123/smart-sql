@@ -40,7 +40,20 @@ export interface TableIndex {
 export interface DbTreeNode {
   id: string;
   name: string;
-  type: 'connection' | 'database' | 'tables-folder' | 'table' | 'columns-folder' | 'column' | 'indexes-folder' | 'index' | 'foreignkeys-folder' | 'foreignkey' | 'triggers-folder' | 'trigger';
+  type:
+    | "connection"
+    | "database"
+    | "tables-folder"
+    | "table"
+    | "collection"
+    | "columns-folder"
+    | "column"
+    | "indexes-folder"
+    | "index"
+    | "foreignkeys-folder"
+    | "foreignkey"
+    | "triggers-folder"
+    | "trigger";
   parentId?: string;
   expanded?: boolean;
   children?: DbTreeNode[];
@@ -75,7 +88,7 @@ export interface ErrorResponse {
 export interface DatabaseConnection {
   id?: number;
   name: string;
-  db_type: 'sqlite' | 'mysql' | 'postgresql';
+  db_type: "sqlite" | "mysql" | "postgresql" | "mongodb";
   host?: string;
   port?: number;
   database_name?: string;
@@ -84,7 +97,7 @@ export interface DatabaseConnection {
   file_path?: string;
   connection_string?: string;
   is_active?: boolean;
-  environment?: string;  // 环境标签: development, testing, staging, production
+  environment?: string; // 环境标签: development, testing, staging, production
   created_at?: string;
   updated_at?: string;
 }
@@ -92,26 +105,26 @@ export interface DatabaseConnection {
 // 连接请求
 export interface ConnectionRequest {
   name: string;
-  db_type: 'sqlite' | 'mysql' | 'postgresql';
+  db_type: "sqlite" | "mysql" | "postgresql" | "mongodb";
   host?: string;
   port?: number;
   database_name?: string;
   username?: string;
   password?: string;
   file_path?: string;
-  environment?: string;  // 环境标签
+  environment?: string; // 环境标签
 }
 
 // 连接测试请求
 export interface ConnectionTestRequest {
-  db_type: 'sqlite' | 'mysql' | 'postgresql';
+  db_type: "sqlite" | "mysql" | "postgresql" | "mongodb";
   host?: string;
   port?: number;
   database_name?: string;
   username?: string;
   password?: string;
   file_path?: string;
-  environment?: string;  // 环境标签
+  environment?: string; // 环境标签
 }
 
 // 连接测试响应

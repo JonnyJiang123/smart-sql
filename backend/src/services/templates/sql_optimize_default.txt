@@ -17,11 +17,21 @@
 - 避免不必要的数据扫描和排序
 - 符合{{database_type}}的特定优化技巧
 
+**重要要求：请将优化建议使用清晰、结构化的Markdown格式编写，以便前端页面直接渲染展示。**
+
+Markdown格式要求：
+- 使用标题（#、##、###）组织内容结构
+- 使用列表（有序或无序列表）清晰展示优化点
+- 对SQL代码片段使用代码块（```sql）
+- 对其他代码或命令使用适当的代码块
+- 使用加粗（**）强调重要内容
+- 使用换行和段落分隔不同的优化建议
+
 请将优化后的SQL放在<optimized_sql>标签内，将优化建议放在<optimization_advice>标签内：
 <optimized_sql>
 -- 优化后的SQL查询
 </optimized_sql>
 
 <optimization_advice>
-<!-- 详细的优化建议 -->
+<!-- 详细的优化建议，使用Markdown格式 -->
 </optimization_advice>

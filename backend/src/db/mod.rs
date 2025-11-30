@@ -1,6 +1,8 @@
 use sqlx::{Executor};
 use std::env;
 use thiserror::Error;
+use mongodb::{Client, Database};
+use futures_util::TryStreamExt;
 
 pub mod local_storage;
 
@@ -12,7 +14,11 @@ pub enum DatabaseError {
     #[error("数据库连接失败: {0}")]
     ConnectionFailed(#[from] sqlx::Error),
     
+    #[error("MongoDB连接失败: {0}")]
+    MongoConnectionFailed(#[from] mongodb::error::Error),
+    
     #[error("未找到数据库URL配置")]
+    #[allow(dead_code)]
     MissingDatabaseUrl,
     
     #[error("不支持的数据库类型: {0}")]
@@ -25,6 +31,7 @@ pub enum DatabaseType {
     PostgreSQL,
     MySQL,
     SQLite,
+    MongoDB,
 }
 
 // 数据库连接池的枚举类型
@@ -33,6 +40,7 @@ pub enum DatabasePool {
     PostgreSQL(sqlx::PgPool),
     MySQL(sqlx::MySqlPool),
     SQLite(sqlx::SqlitePool),
+    MongoDB(Client, String), // MongoDB客户端和数据库名称
 }
 
 // 数据库连接管理器
@@ -44,6 +52,7 @@ pub struct DatabaseManager {
 
 impl DatabaseManager {
     // 创建新的数据库管理器（从环境变量）
+    #[allow(dead_code)]
     pub async fn new() -> Result<Self, DatabaseError> {
         let database_url = env::var("DATABASE_URL")
             .map_err(|_| DatabaseError::MissingDatabaseUrl)?;
@@ -60,6 +69,8 @@ impl DatabaseManager {
             DatabaseType::MySQL
         } else if database_url.starts_with("sqlite:") {
             DatabaseType::SQLite
+        } else if database_url.starts_with("mongodb://") || database_url.starts_with("mongodb+srv://") {
+            DatabaseType::MongoDB
         } else {
             return Err(DatabaseError::UnsupportedDatabaseType(database_url.to_string()));
         };
@@ -78,6 +89,19 @@ impl DatabaseManager {
                 let sqlite_pool = sqlx::SqlitePool::connect(database_url).await?;
                 DatabasePool::SQLite(sqlite_pool)
             }
+            DatabaseType::MongoDB => {
+                // 解析MongoDB连接字符串，提取数据库名称
+                let client = Client::with_uri_str(database_url).await?;
+                
+                // 从连接字符串提取数据库名称
+                let db_name = if let Some(db_part) = database_url.split('/').nth(3) {
+                    db_part.split('?').next().unwrap_or("admin").to_string()
+                } else {
+                    "admin".to_string()
+                };
+                
+                DatabasePool::MongoDB(client, db_name)
+            }
         };
         
         log::info!("数据库连接成功，类型: {:?}", db_type);
@@ -88,7 +112,8 @@ impl DatabaseManager {
         })
     }
     
-    // 测试连接
+    // 测试数据库连接
+    #[allow(dead_code)]
     pub async fn test_connection(&self) -> Result<(), DatabaseError> {
         match &self.pool {
             DatabasePool::PostgreSQL(pool) => {
@@ -99,6 +124,10 @@ impl DatabaseManager {
             }
             DatabasePool::SQLite(pool) => {
                 pool.execute("SELECT 1").await?;
+            }
+            DatabasePool::MongoDB(client, db_name) => {
+                let database = client.database(db_name);
+                database.run_command(mongodb::bson::doc! { "ping": 1 }, None).await?;
             }
         }
         log::info!("数据库连接测试成功");
@@ -127,10 +156,16 @@ impl DatabaseManager {
                     .await?;
                 Ok(tables)
             },
+            DatabasePool::MongoDB(client, db_name) => {
+                let database = client.database(db_name);
+                let collections = database.list_collection_names(None).await?;
+                Ok(collections)
+            }
         }
     }
     
-    // 获取数据库连接池（返回引用）
+    // 获取数据库连接池
+    #[allow(dead_code)]
     pub fn get_pool(&self) -> &DatabasePool {
         &self.pool
     }
@@ -236,6 +271,38 @@ impl DatabaseManager {
                 
                 Ok(result)
             },
+            DatabasePool::MongoDB(client, db_name) => {
+                let database = client.database(db_name);
+                let collection = database.collection::<mongodb::bson::Document>(table_name);
+                
+                // 获取集合索引信息
+                let mut indexes = collection.list_indexes(None).await?;
+                let mut index_list = Vec::new();
+                
+                while let Some(index) = indexes.try_next().await? {
+                    // 从options中获取索引名称和unique属性
+                    let options = index.options.unwrap_or_default();
+                    let name = options.name.unwrap_or_default();
+                    let unique = options.unique.unwrap_or(false);
+                    
+                    // 获取索引键
+                    let columns: Vec<String> = index.keys.keys().map(|k| k.to_string()).collect();
+                    index_list.push((name, columns, unique));
+                }
+                
+                Ok(index_list)
+            }
+        }
+    }
+    
+    // 获取MongoDB数据库
+    #[allow(dead_code)]
+    pub fn get_mongo_database(&self) -> Option<Database> {
+        match &self.pool {
+            DatabasePool::MongoDB(client, db_name) => {
+                Some(client.database(db_name))
+            },
+            _ => None
         }
     }
 }

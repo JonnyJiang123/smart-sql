@@ -85,10 +85,10 @@
       const connectionToSave: ConnectionRequest = {
         ...currentConnection,
         name: currentConnection.name.trim(),
-        db_type: currentConnection.db_type as 'sqlite' | 'mysql' | 'postgresql',
+        db_type: currentConnection.db_type as 'sqlite' | 'mysql' | 'postgresql' | 'mongodb',
         file_path: (currentConnection.file_path || '').trim(),
         host: (currentConnection.host || '').trim(),
-        port: currentConnection.port || 3306,
+        port: currentConnection.port || (currentConnection.db_type === 'mongodb' ? 27017 : 3306),
         database_name: (currentConnection.database_name || '').trim(),
         username: (currentConnection.username || '').trim(),
         password: (currentConnection.password || '').trim()
@@ -122,10 +122,10 @@
     testStatus = null;
     try {
       const response = await testConnection({
-        db_type: currentConnection.db_type.trim() as 'sqlite' | 'mysql' | 'postgresql',
+        db_type: currentConnection.db_type.trim() as 'sqlite' | 'mysql' | 'postgresql' | 'mongodb',
         file_path: (currentConnection.file_path || '').trim(),
         host: (currentConnection.host || '').trim(),
-        port: currentConnection.port || 3306,
+        port: currentConnection.port || (currentConnection.db_type === 'mongodb' ? 27017 : 3306),
         database_name: (currentConnection.database_name || '').trim(),
         username: (currentConnection.username || '').trim(),
         password: (currentConnection.password || '').trim()
@@ -258,6 +258,7 @@
               <option value="sqlite">SQLite</option>
               <option value="mysql">MySQL</option>
               <option value="postgresql">PostgreSQL</option>
+              <option value="mongodb">MongoDB</option>
             </select>
           </div>
 

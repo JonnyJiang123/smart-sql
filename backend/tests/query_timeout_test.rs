@@ -1,6 +1,6 @@
 // 查询超时功能测试
 
-use smart_sql_backend::models::{SqlQueryRequest, SqlQueryResult};
+use smart_sql_backend::models::{SqlQueryRequest};
 use serde_json::json;
 
 #[tokio::test]

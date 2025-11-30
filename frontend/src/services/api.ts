@@ -150,21 +150,23 @@ export async function generateSql(
 
 // 优化SQL
 export async function optimizeSql(
-  sql: string
+  sql: string,
+  databaseType?: string
 ): Promise<SqlGenerationResult> {
-  return fetchApi<SqlGenerationResult>('/ai/sql/optimize', {
-    method: 'POST',
-    body: JSON.stringify({ sql }),
+  return fetchApi<SqlGenerationResult>("/ai/sql/optimize", {
+    method: "POST",
+    body: JSON.stringify({ sql, database_type: databaseType }),
   });
 }
 
 // 解释SQL
 export async function explainSql(
-  sql: string
+  sql: string,
+  databaseType?: string
 ): Promise<{ explanation: string }> {
-  return fetchApi<{ explanation: string }>('/ai/sql/explain', {
-    method: 'POST',
-    body: JSON.stringify({ sql }),
+  return fetchApi<{ explanation: string }>("/ai/sql/explain", {
+    method: "POST",
+    body: JSON.stringify({ sql, database_type: databaseType }),
   });
 }
 

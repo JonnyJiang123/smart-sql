@@ -2,6 +2,7 @@ use sqlx::{Pool, Any, Error as SqlxError, Row, Column};
 use crate::models::{TableInfo, ColumnInfo, TableSchema, ForeignKeyInfo};
 
 // 获取所有表名（SQLite专用）
+#[allow(dead_code)]
 pub async fn get_all_tables(pool: &Pool<Any>) -> Result<Vec<TableInfo>, SqlxError> {
     #[derive(sqlx::FromRow)]
     struct TableRow {
@@ -22,6 +23,7 @@ pub async fn get_all_tables(pool: &Pool<Any>) -> Result<Vec<TableInfo>, SqlxErro
 }
 
 // 获取表的详细结构（SQLite专用）
+#[allow(dead_code)]
 pub async fn get_table_schema(
     pool: &Pool<Any>,
     table_name: &str
@@ -43,6 +45,7 @@ pub async fn get_table_schema(
 }
 
 // 获取表的列信息（SQLite专用）
+#[allow(dead_code)]
 pub async fn get_table_columns(
     pool: &Pool<Any>,
     table_name: &str
@@ -74,13 +77,16 @@ pub async fn get_table_columns(
 }
 
 // 获取表的外键信息（SQLite专用）
+#[allow(dead_code)]
 pub async fn get_table_foreign_keys(
     pool: &Pool<Any>,
     table_name: &str
 ) -> Result<Vec<ForeignKeyInfo>, SqlxError> {
     #[derive(sqlx::FromRow)]
     struct SqliteForeignKey {
+        #[allow(dead_code)]
         id: i32,
+        #[allow(dead_code)]
         seq: i32,
         table: String,
         from: String,
@@ -103,6 +109,7 @@ pub async fn get_table_foreign_keys(
 }
 
 // 执行SQL查询并返回结果（SQLite专用）
+#[allow(dead_code)]
 pub async fn execute_sql_query(
     pool: &Pool<Any>,
     sql: &str
@@ -151,22 +158,30 @@ pub async fn execute_sql_query(
 }
 
 // 执行带分页的SQL查询
+#[allow(dead_code)]
 pub async fn execute_sql_query_with_pagination(
     pool: &Pool<Any>,
     sql: &str,
-    page: u64,
-    page_size: u64
-) -> Result<(Vec<String>, Vec<Vec<serde_json::Value>>), SqlxError> {
+    page: u32,
+    page_size: u32
+) -> Result<(Vec<String>, Vec<Vec<serde_json::Value>>, u64), SqlxError> {
     // 计算OFFSET
     let offset = (page - 1) * page_size;
     
     // 添加LIMIT和OFFSET
     let paginated_sql = format!("{} LIMIT {} OFFSET {}", sql, page_size, offset);
     
-    execute_sql_query(pool, &paginated_sql).await
+    // 获取分页查询结果
+    let (columns, data) = execute_sql_query(pool, &paginated_sql).await?;
+    
+    // 获取总行数
+    let total_rows = count_query_rows(pool, sql).await?;
+    
+    Ok((columns, data, total_rows))
 }
 
-// 获取查询结果的总行数
+// 统计查询结果行数
+#[allow(dead_code)]
 pub async fn count_query_rows(
     pool: &Pool<Any>,
     sql: &str

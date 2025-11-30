@@ -2,8 +2,8 @@ use axum::{Router, Extension};
 use dotenv::dotenv;
 use std::net::SocketAddr;
 use tower_http::cors::{Any, CorsLayer};
-use services::ai::AiService;
-use services::templates::TemplateManager;
+use crate::services::ai::AiService;
+use crate::services::templates::TemplateManager;
 
 mod api;
 mod db;
@@ -36,15 +36,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // 注意：DatabaseManager 将在用户选择连接时动态创建，不在启动时初始化
     
-    // 初始化AI服务
-    let ai_service = match AiService::new() {
+    // 初始化AI服务（即使API密钥未配置也初始化，允许用户后续配置）
+    let ai_service = match AiService::new(&local_storage).await {
         Ok(service) => {
             log::info!("AI服务初始化成功");
             Some(service)
         },
         Err(e) => {
-            log::error!("AI服务初始化失败: {}", e);
-            None
+            log::warn!("AI服务初始化失败: {}", e);
+            log::info!("AI服务将在用户配置API密钥后可用");
+            // 即使初始化失败，也创建一个服务实例，让它在调用时返回错误
+            // 这样用户可以先配置API密钥，然后再使用AI功能
+            Some(AiService::new_without_validation(&local_storage))
         }
     };
 
@@ -61,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // 创建路由
     let app = Router::new()
-        .nest("", api::routes::create_routes())
+        .nest("/api", api::routes::create_routes())
         .layer(Extension(local_storage))
         .layer(Extension(ai_service))
         .layer(Extension(template_manager))

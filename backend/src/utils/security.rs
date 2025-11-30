@@ -95,6 +95,7 @@ impl SqlInjectionProtection {
     }
     
     // 清理SQL输入，移除潜在的危险字符
+    #[allow(dead_code)]
     pub fn sanitize_sql(sql: &str) -> String {
         // 这是一个基本的清理实现，实际应用中可能需要更复杂的规则
         // 注意：最好的防护是使用参数化查询，而不是字符串清理
@@ -126,24 +127,36 @@ impl SqlInjectionProtection {
 }
 
 // 请求速率限制器
+#[allow(dead_code)]
 pub struct RateLimiter {
     // 在实际应用中，这里应该有更复杂的数据结构来存储请求记录
     // 比如使用Redis或内存中的LRU缓存
 }
 
 impl RateLimiter {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {}
     }
     
-    pub async fn check_rate_limit(&self, ip_address: &str) -> Result<(), String> {
+    #[allow(dead_code)]
+    pub async fn check_rate_limit(&self, _ip_address: &str) -> Result<(), String> {
         // 简单的速率限制实现
         // 实际应用中应该检查单位时间内的请求次数
+        // 这里只是一个示例实现，总是允许请求
         Ok(())
     }
 }
 
+// 为 RateLimiter 添加 Default 实现
+impl Default for RateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // API密钥验证
+#[allow(dead_code)]
 pub fn validate_api_key(api_key: &str) -> bool {
     // 简单的API密钥验证
     // 实际应用中应该从安全的存储中获取有效的API密钥

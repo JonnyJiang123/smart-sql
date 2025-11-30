@@ -1,11 +1,20 @@
 use super::ai::AiService;
+use crate::db::LocalStorageManager;
 
 #[tokio::test]
 async fn test_ai_service_initialization() {
     // 测试AI服务初始化
     dotenv::dotenv().ok();
     
-    let result = AiService::new();
+    // 创建内存数据库用于测试
+    let local_storage = LocalStorageManager::new(":memory:").await.unwrap();
+    
+    // 设置测试用的API密钥
+    local_storage.set_app_setting("ai_api_key", "test-api-key").await.unwrap();
+    local_storage.set_app_setting("ai_api_base_url", "https://api.openai.com/v1").await.unwrap();
+    local_storage.set_app_setting("ai_model", "gpt-4o-mini").await.unwrap();
+    
+    let result = AiService::new(&local_storage).await;
     assert!(result.is_ok(), "AI服务应该成功初始化");
     
     println!("✅ AI服务初始化成功");
@@ -17,7 +26,20 @@ async fn test_generate_sql_with_real_api() {
     // 测试真实的SQL生成
     dotenv::dotenv().ok();
     
-    let service = AiService::new().expect("AI服务初始化失败");
+    // 创建内存数据库用于测试
+    let local_storage = LocalStorageManager::new(":memory:").await.unwrap();
+    
+    // 设置真实的API密钥（从环境变量获取）
+    if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+        local_storage.set_app_setting("ai_api_key", &api_key).await.unwrap();
+    } else if let Ok(api_key) = std::env::var("AI_API_KEY") {
+        local_storage.set_app_setting("ai_api_key", &api_key).await.unwrap();
+    }
+    
+    local_storage.set_app_setting("ai_api_base_url", "https://api.openai.com/v1").await.unwrap();
+    local_storage.set_app_setting("ai_model", "gpt-4o-mini").await.unwrap();
+    
+    let service = AiService::new(&local_storage).await.expect("AI服务初始化失败");
     
     let natural_language = "查询所有学生的姓名";
     let database_schema = Some("表结构:\n1. 表名: student\n   字段:\n     - id (bigint) [主键] [NOT NULL]\n     - name (varchar) [NOT NULL] // 学生姓名\n     - age (int)");
@@ -51,7 +73,20 @@ async fn test_chat_completion_with_real_api() {
     // 测试基础的聊天完成功能
     dotenv::dotenv().ok();
     
-    let service = AiService::new().expect("AI服务初始化失败");
+    // 创建内存数据库用于测试
+    let local_storage = LocalStorageManager::new(":memory:").await.unwrap();
+    
+    // 设置真实的API密钥（从环境变量获取）
+    if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+        local_storage.set_app_setting("ai_api_key", &api_key).await.unwrap();
+    } else if let Ok(api_key) = std::env::var("AI_API_KEY") {
+        local_storage.set_app_setting("ai_api_key", &api_key).await.unwrap();
+    }
+    
+    local_storage.set_app_setting("ai_api_base_url", "https://api.openai.com/v1").await.unwrap();
+    local_storage.set_app_setting("ai_model", "gpt-4o-mini").await.unwrap();
+    
+    let service = AiService::new(&local_storage).await.expect("AI服务初始化失败");
     
     let messages = vec![
         ("system".to_string(), "你是一个SQL专家，只返回SQL语句，不要其他解释".to_string()),
@@ -75,13 +110,15 @@ async fn test_chat_completion_with_real_api() {
     }
 }
 
-#[test]
-fn test_ai_service_without_api_key() {
+#[tokio::test]
+async fn test_ai_service_without_api_key() {
     // 测试没有API密钥时的行为
-    std::env::remove_var("OPENAI_API_KEY");
-    std::env::remove_var("AI_API_KEY");
     
-    let result = AiService::new();
+    // 创建内存数据库用于测试
+    let local_storage = LocalStorageManager::new(":memory:").await.unwrap();
+    
+    // 确保没有设置API密钥
+    let result = AiService::new(&local_storage).await;
     assert!(result.is_err(), "没有API密钥应该返回错误");
     
     println!("✅ 正确处理了缺少API密钥的情况");

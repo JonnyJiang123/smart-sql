@@ -84,6 +84,24 @@
     apply: `${fn}()`
   }));
   
+  // MongoDB关键字和函数补全
+  const mongodbKeywordCompletions = [
+    'db', 'getCollection', 'find', 'findOne', 'insertOne', 'insertMany',
+    'updateOne', 'updateMany', 'deleteOne', 'deleteMany', 'aggregate',
+    'countDocuments', 'distinct', 'sort', 'limit', 'skip', 'project',
+    'match', 'group', 'lookup', 'unwind', 'addFields', 'out', 'merge'
+  ].map((label) => ({ label, type: 'keyword', apply: label }));
+  
+  const mongodbFunctionCompletions = [
+    'ObjectId', 'ISODate', 'NumberInt', 'NumberLong', 'NumberDecimal',
+    'BinData', 'UUID', 'MD5', 'SHA1', 'SHA256', 'toUpper', 'toLower',
+    'substr', 'concat', 'size', 'type', 'ifNull', 'switch', 'cond'
+  ].map((fn) => ({
+    label: fn,
+    type: 'function',
+    apply: `${fn}()`
+  }));
+  
   // SQL片段快捷输入定义
   const sqlSnippets = [
     {
@@ -290,166 +308,231 @@
     
     const sql = context.state.doc.toString();
     const position = word.from;
-    const sqlContext = analyzeSqlContext(sql, position);
+    const query = word.text.toLowerCase();
     
     let options: any[] = [];
     
-    // 根据上下文提供不同的补全选项
-    switch (sqlContext.context) {
-      case 'select':
-        // SELECT后面：提示字段名、函数、关键字
-        if (sqlContext.currentTable) {
-          const columns = getTableColumns(sqlContext.currentTable);
-          options.push(...columns.map(col => ({
-            label: col,
-            type: 'variable',
-            apply: col
-          })));
-        } else {
-          // 如果没有表名，提示所有表的字段（如果已加载）
-          tableSchemas.forEach((schema, tableName) => {
-            schema.columns.forEach(col => {
-              options.push({
-                label: `${tableName}.${col.name}`,
-                type: 'variable',
-                apply: `${tableName}.${col.name}`
+    // 根据数据库类型提供不同的补全选项
+    if (currentDatabaseType === 'mongodb') {
+      // MongoDB补全逻辑
+      
+      // 总是显示MongoDB关键字和函数
+      options.push(...mongodbKeywordCompletions);
+      options.push(...mongodbFunctionCompletions);
+      
+      // 提示集合名
+      options.push(...databaseTables.map(collection => ({
+        label: collection,
+        type: 'variable',
+        apply: collection
+      })));
+      
+      // 添加MongoDB特定的补全模板
+      const mongodbTemplates = [
+        {
+          label: 'db.collection.find()',
+          type: 'snippet',
+          detail: '查找集合中的所有文档',
+          apply: 'db.getCollection("${1:collection}").find()'
+        },
+        {
+          label: 'db.collection.findOne()',
+          type: 'snippet',
+          detail: '查找集合中的单个文档',
+          apply: 'db.getCollection("${1:collection}").findOne()'
+        },
+        {
+          label: 'db.collection.find().sort()',
+          type: 'snippet',
+          detail: '排序查询结果',
+          apply: 'db.getCollection("${1:collection}").find().sort({ ${2:field}: ${3:1} })'
+        },
+        {
+          label: 'db.collection.find().limit()',
+          type: 'snippet',
+          detail: '限制查询结果数量',
+          apply: 'db.getCollection("${1:collection}").find().limit(${2:10})'
+        },
+        {
+          label: 'db.collection.find().skip()',
+          type: 'snippet',
+          detail: '跳过指定数量的文档',
+          apply: 'db.getCollection("${1:collection}").find().skip(${2:0})'
+        },
+        {
+          label: 'db.collection.aggregate()',
+          type: 'snippet',
+          detail: '聚合查询',
+          apply: 'db.getCollection("${1:collection}").aggregate([\n  { $match: { ${2:field}: ${3:value} } },\n  { $group: { _id: "$${4:groupField}", count: { $sum: 1 } } }\n])'
+        }
+      ];
+      
+      options.push(...mongodbTemplates);
+    } else {
+      // SQL补全逻辑
+      const sqlContext = analyzeSqlContext(sql, position);
+      
+      // 根据上下文提供不同的补全选项
+      switch (sqlContext.context) {
+        case 'select':
+          // SELECT后面：提示字段名、函数、关键字
+          if (sqlContext.currentTable) {
+            const columns = getTableColumns(sqlContext.currentTable);
+            options.push(...columns.map(col => ({
+              label: col,
+              type: 'variable',
+              apply: col
+            })));
+          } else {
+            // 如果没有表名，提示所有表的字段（如果已加载）
+            tableSchemas.forEach((schema, tableName) => {
+              schema.columns.forEach(col => {
+                options.push({
+                  label: `${tableName}.${col.name}`,
+                  type: 'variable',
+                  apply: `${tableName}.${col.name}`
+                });
               });
             });
-          });
-        }
-        options.push(...functionCompletions);
-        options.push(...keywordCompletions);
-        break;
-        
-      case 'from':
-      case 'join':
-        // FROM/JOIN后面：提示表名
-        options.push(...databaseTables.map(table => ({
-          label: table,
-          type: 'variable',
-          apply: table
-        })));
-        options.push(...keywordCompletions.filter(k => 
-          ['JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN'].includes(k.label)
-        ));
-        break;
-        
-      case 'where':
-      case 'order':
-      case 'group':
-        // WHERE/ORDER BY/GROUP BY后面：提示字段名
-        if (sqlContext.currentTable) {
-          const columns = getTableColumns(sqlContext.currentTable);
-          options.push(...columns.map(col => ({
-            label: col,
-            type: 'variable',
-            apply: col
-          })));
-        }
-        options.push(...functionCompletions);
-        options.push(...keywordCompletions.filter(k => 
-          ['AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN'].includes(k.label)
-        ));
-        break;
-        
-      default:
-        // 默认：提示所有选项
-        options.push(...keywordCompletions);
-        options.push(...functionCompletions);
-        if (databaseTables.length > 0) {
+          }
+          options.push(...functionCompletions);
+          options.push(...keywordCompletions);
+          break;
+          
+        case 'from':
+        case 'join':
+          // FROM/JOIN后面：提示表名
           options.push(...databaseTables.map(table => ({
             label: table,
             type: 'variable',
             apply: table
           })));
-        }
-    }
-    
-    // 添加SQL片段快捷输入（在所有上下文中都可用）
-    const query = word.text.toLowerCase();
-    const matchingSnippets = sqlSnippets.filter(snippet => 
-      snippet.label.toLowerCase().startsWith(query) || 
-      snippet.description.toLowerCase().includes(query)
-    );
-    
-    if (matchingSnippets.length > 0) {
-      options.push(...matchingSnippets.map(snippet => ({
-        label: snippet.label,
-        type: 'snippet',
-        detail: snippet.description,
-        apply: (view: EditorView, _completion: any, from: number, to: number) => {
-          // 展开SQL片段
-          const snippetText = snippet.snippet;
-          let expanded = snippetText;
+          options.push(...keywordCompletions.filter(k => 
+            ['JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN'].includes(k.label)
+          ));
+          break;
           
-          // 替换占位符 ${1:placeholder} -> placeholder
-          expanded = expanded.replace(/\$\{(\d+):([^}]+)\}/g, (_match, _num, text) => {
-            return text;
-          });
+        case 'where':
+        case 'order':
+        case 'group':
+          // WHERE/ORDER BY/GROUP BY后面：提示字段名
+          if (sqlContext.currentTable) {
+            const columns = getTableColumns(sqlContext.currentTable);
+            options.push(...columns.map(col => ({
+              label: col,
+              type: 'variable',
+              apply: col
+            })));
+          }
+          options.push(...functionCompletions);
+          options.push(...keywordCompletions.filter(k => 
+            ['AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN'].includes(k.label)
+          ));
+          break;
           
-          // 替换选择项占位符 ${1|option1,option2|} -> option1
-          expanded = expanded.replace(/\$\{(\d+)\|([^|]+)\|}/g, (_match, _num, options) => {
-            const firstOption = options.split(',')[0].trim();
-            return firstOption;
-          });
-          
-          // 插入展开后的文本
-          view.dispatch({
-            changes: {
-              from: from,
-              to: to,
-              insert: expanded
-            },
-            selection: { anchor: from + expanded.length }
-          });
-        }
-      })));
-    }
+        default:
+          // 默认：提示所有选项
+          options.push(...keywordCompletions);
+          options.push(...functionCompletions);
+          if (databaseTables.length > 0) {
+            options.push(...databaseTables.map(table => ({
+              label: table,
+              type: 'variable',
+              apply: table
+            })));
+          }
+      }
     
-    // 过滤匹配的选项
-    const filteredOptions = options.filter(opt => 
-      opt.label.toLowerCase().includes(query) ||
-      (opt.detail && opt.detail.toLowerCase().includes(query))
-    );
-    
-    return {
-      from: word.from,
-      options: filteredOptions.length > 0 ? filteredOptions : options,
-      validFor: /^[\w.]*$/
-    };
-  };
+  }
   
-  // 自定义SQL语法高亮 - 关键字紫色加粗
+  // 添加SQL片段快捷输入（在所有上下文中都可用）
+  const matchingSnippets = sqlSnippets.filter(snippet => 
+    snippet.label.toLowerCase().startsWith(query) || 
+    snippet.description.toLowerCase().includes(query)
+  );
+  
+  if (matchingSnippets.length > 0) {
+    options.push(...matchingSnippets.map(snippet => ({
+      label: snippet.label,
+      type: 'snippet',
+      detail: snippet.description,
+      apply: (view: EditorView, _completion: any, from: number, to: number) => {
+        // 展开SQL片段
+        const snippetText = snippet.snippet;
+        let expanded = snippetText;
+        
+        // 替换占位符 ${1:placeholder} -> placeholder
+        expanded = expanded.replace(/\$\{(\d+):([^}]+)\}/g, (_match, _num, text) => {
+          return text;
+        });
+        
+        // 替换选择项占位符 ${1|option1,option2|} -> option1
+        expanded = expanded.replace(/\$\{(\d+)\|([^|]+)\|}/g, (_match, _num, options) => {
+          const firstOption = options.split(',')[0].trim();
+          return firstOption;
+        });
+        
+        // 插入展开后的文本
+        view.dispatch({
+          changes: {
+            from: from,
+            to: to,
+            insert: expanded
+          },
+          selection: { anchor: from + expanded.length }
+        });
+      }
+    })));
+  }
+  
+  // 过滤匹配的选项
+  const filteredOptions = options.filter(opt => 
+    opt.label.toLowerCase().includes(query) ||
+    (opt.detail && opt.detail.toLowerCase().includes(query))
+  );
+  
+  return {
+    from: word.from,
+    options: filteredOptions.length > 0 ? filteredOptions : options,
+    validFor: /^[\w.]*$/
+  };
+};
+  
+  // 自定义SQL语法高亮 - 关键字蓝色加粗
   const sqlHighlight = HighlightStyle.define([
-    { tag: tags.keyword, color: '#9333ea', fontWeight: '800' },
-    { tag: tags.name, color: '#000000' },
-    { tag: tags.variableName, color: '#000000' },
-    { tag: tags.typeName, color: '#000000' },
-    { tag: tags.propertyName, color: '#000000' },
-    { tag: tags.string, color: '#16a34a' },
-    { tag: tags.number, color: '#db2777' },
-    { tag: tags.operator, color: '#475569', fontWeight: '600' },
-    { tag: tags.comment, color: '#94a3b8' },
+    { tag: tags.keyword, color: '#569cd6', fontWeight: '800' },
+    { tag: tags.name, color: '#d4d4d4' },
+    { tag: tags.variableName, color: '#9cdcfe' },
+    { tag: tags.typeName, color: '#4ec9b0' },
+    { tag: tags.propertyName, color: '#9cdcfe' },
+    { tag: tags.string, color: '#ce9178' },
+    { tag: tags.number, color: '#b5cea8' },
+    { tag: tags.operator, color: '#d4d4d4', fontWeight: '600' },
+    { tag: tags.comment, color: '#6a9955', fontStyle: 'italic' },
   ]);
   
   // CodeMirror主题配置
   const editorTheme = EditorView.theme({
     '&': {
       height: '100%',
-      fontSize: '14px'
+      fontSize: '14px',
+      backgroundColor: '#1e1e1e'
     },
     '.cm-content': {
       padding: '16px',
       fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", "Consolas", monospace',
       lineHeight: '1.6',
-      minHeight: '100%'
+      minHeight: '100%',
+      backgroundColor: '#1e1e1e',
+      color: '#d4d4d4'
     },
     '.cm-focused': {
       outline: 'none'
     },
     '.cm-gutters': {
-      backgroundColor: 'transparent',
-      border: 'none'
+      backgroundColor: '#1e1e1e',
+      border: 'none',
+      color: '#6e6e6e'
     },
     '.cm-activeLine': {
       backgroundColor: 'rgba(59, 130, 246, 0.1)'
@@ -458,30 +541,30 @@
       borderLeft: '2px solid #2563eb'
     },
     '.cm-keyword': {
-      color: '#1d4ed8',
+      color: '#569cd6',
       fontWeight: '600'
     },
     '.cm-variableName': {
-      color: '#0f172a'
+      color: '#9cdcfe'
     },
     '.cm-string': {
-      color: '#16a34a'
+      color: '#ce9178'
     },
     '.cm-number': {
-      color: '#db2777'
+      color: '#b5cea8'
     },
     '.cm-operator': {
-      color: '#475569',
+      color: '#d4d4d4',
       fontWeight: '500'
     },
     '.cm-comment': {
-      color: '#94a3b8',
+      color: '#6a9955',
       fontStyle: 'italic'
     },
     '.cm-placeholder': {
-      color: '#9ca3af'
+      color: '#6e6e6e'
     }
-  }, { dark: false });
+  }, { dark: true });
   
   // 更新监听器 - 同步value和编辑器内容
   const updateListener = EditorView.updateListener.of((update) => {
@@ -645,27 +728,34 @@
     }
   }
   
-  // 格式化SQL
+  // 格式化SQL或MongoDB查询
   function formatSql() {
     if (!editorView) return;
     
     const currentValue = editorView.state.doc.toString();
-    // 简单的SQL格式化逻辑
-    let formatted = currentValue
-      .replace(/\s+/g, ' ')
-      .replace(/\bSELECT\b/gi, '\nSELECT')
-      .replace(/\bFROM\b/gi, '\nFROM')
-      .replace(/\bWHERE\b/gi, '\nWHERE')
-      .replace(/\bORDER BY\b/gi, '\nORDER BY')
-      .replace(/\bGROUP BY\b/gi, '\nGROUP BY')
-      .replace(/\bHAVING\b/gi, '\nHAVING')
-      .replace(/\bAND\b/gi, '\n  AND')
-      .replace(/\bOR\b/gi, '\n  OR')
-      .replace(/\bJOIN\b/gi, '\nJOIN')
-      .replace(/\bLEFT JOIN\b/gi, '\nLEFT JOIN')
-      .replace(/\bRIGHT JOIN\b/gi, '\nRIGHT JOIN')
-      .replace(/\bINNER JOIN\b/gi, '\nINNER JOIN')
-      .trim();
+    let formatted = currentValue;
+    
+    if (currentDatabaseType === 'mongodb') {
+      // MongoDB查询格式化逻辑
+      formatted = formatMongoQuery(currentValue);
+    } else {
+      // SQL格式化逻辑
+      formatted = currentValue
+        .replace(/\s+/g, ' ')
+        .replace(/\bSELECT\b/gi, '\nSELECT')
+        .replace(/\bFROM\b/gi, '\nFROM')
+        .replace(/\bWHERE\b/gi, '\nWHERE')
+        .replace(/\bORDER BY\b/gi, '\nORDER BY')
+        .replace(/\bGROUP BY\b/gi, '\nGROUP BY')
+        .replace(/\bHAVING\b/gi, '\nHAVING')
+        .replace(/\bAND\b/gi, '\n  AND')
+        .replace(/\bOR\b/gi, '\n  OR')
+        .replace(/\bJOIN\b/gi, '\nJOIN')
+        .replace(/\bLEFT JOIN\b/gi, '\nLEFT JOIN')
+        .replace(/\bRIGHT JOIN\b/gi, '\nRIGHT JOIN')
+        .replace(/\bINNER JOIN\b/gi, '\nINNER JOIN')
+        .trim();
+    }
     
     // 更新编辑器内容
     editorView.dispatch({
@@ -678,6 +768,217 @@
     
     value = formatted;
     updateStatus();
+  }
+  
+  // 格式化MongoDB查询
+  function formatMongoQuery(query: string): string {
+    // 简单的MongoDB查询格式化逻辑
+    let formatted = query;
+    
+    // 替换多余的空格
+    formatted = formatted.replace(/\s+/g, ' ').trim();
+    
+    // 处理各种MongoDB方法的格式化
+    const methods = ['find', 'findOne', 'insertOne', 'insertMany', 'updateOne', 'updateMany', 'deleteOne', 'deleteMany', 'countDocuments', 'distinct', 'sort', 'project', 'limit', 'skip', 'aggregate'];
+    
+    for (const method of methods) {
+      // 使用正则表达式匹配方法调用，考虑嵌套括号的情况
+      const regex = new RegExp(`\\.${method}\\(([^)]+)\\)`, 'g');
+      formatted = formatted.replace(regex, (match, content) => {
+        // 对于aggregate方法，特殊处理管道数组
+        if (method === 'aggregate' && content.trim().startsWith('[')) {
+          // 格式化聚合管道
+          return `.aggregate(${formatMongoPipeline(content)})`;
+        } else {
+          // 格式化普通方法参数
+          return `.${method}(${formatMongoParams(content)})`;
+        }
+      });
+    }
+    
+    // 在管道操作符前添加换行
+    formatted = formatted.replace(/\|/g, '\n|');
+    
+    return formatted;
+  }
+  
+  // 格式化MongoDB方法参数
+  function formatMongoParams(params: string): string {
+    if (!params.trim()) return params;
+    
+    let formatted = params;
+    let indentLevel = 2;
+    let inString = false;
+    let stringChar = '';
+    let inComment = false;
+    let result = '';
+    let currentIndent = '  ';
+    
+    for (let i = 0; i < formatted.length; i++) {
+      const char = formatted[i];
+      const nextChar = formatted[i + 1];
+      
+      // 处理字符串
+      if ((char === '"' || char === "'") && !inComment) {
+        if (!inString) {
+          inString = true;
+          stringChar = char;
+        } else if (char === stringChar && formatted[i - 1] !== '\\') {
+          inString = false;
+        }
+      }
+      
+      // 处理注释
+      if (!inString) {
+        if (char === '/' && nextChar === '/') {
+          inComment = true;
+        } else if (char === '\n') {
+          inComment = false;
+        }
+      }
+      
+      if (!inString && !inComment) {
+        // 处理大括号
+        if (char === '{') {
+          result += char + '\n' + ' '.repeat(indentLevel);
+          indentLevel += 2;
+          currentIndent = ' '.repeat(indentLevel);
+        } else if (char === '}') {
+          indentLevel -= 2;
+          currentIndent = ' '.repeat(indentLevel);
+          result += '\n' + currentIndent + char;
+        } 
+        // 处理中括号
+        else if (char === '[') {
+          result += char + '\n' + ' '.repeat(indentLevel);
+          indentLevel += 2;
+          currentIndent = ' '.repeat(indentLevel);
+        } else if (char === ']') {
+          indentLevel -= 2;
+          currentIndent = ' '.repeat(indentLevel);
+          result += '\n' + currentIndent + char;
+        } 
+        // 处理逗号
+        else if (char === ',') {
+          result += char + '\n' + currentIndent;
+        } 
+        // 处理空格
+        else if (char === ' ') {
+          // 跳过不必要的空格
+        } 
+        // 其他字符
+        else {
+          result += char;
+        }
+      } else {
+        // 在字符串或注释中，直接添加字符
+        result += char;
+      }
+    }
+    
+    // 移除多余的换行和空格
+    return result.replace(/\n\s+\n/g, '\n').trim();
+  }
+  
+  // 格式化MongoDB聚合管道
+  function formatMongoPipeline(pipeline: string): string {
+    if (!pipeline.trim()) return pipeline;
+    
+    let formatted = pipeline;
+    let indentLevel = 2;
+    let inString = false;
+    let stringChar = '';
+    let inComment = false;
+    let result = '[';
+    let currentIndent = '  ';
+    let inStage = false;
+    
+    // 跳过开头的 [
+    let i = 1;
+    
+    while (i < formatted.length) {
+      const char = formatted[i];
+      const nextChar = formatted[i + 1];
+      
+      // 处理字符串
+      if ((char === '"' || char === "'") && !inComment) {
+        if (!inString) {
+          inString = true;
+          stringChar = char;
+        } else if (char === stringChar && formatted[i - 1] !== '\\') {
+          inString = false;
+        }
+      }
+      
+      // 处理注释
+      if (!inString) {
+        if (char === '/' && nextChar === '/') {
+          inComment = true;
+        } else if (char === '\n') {
+          inComment = false;
+        }
+      }
+      
+      if (!inString && !inComment) {
+        // 处理阶段开始
+        if (char === '{') {
+          if (inStage) {
+            // 这是阶段内的大括号
+            result += char + '\n' + ' '.repeat(indentLevel + 2);
+            indentLevel += 2;
+          } else {
+            // 这是新的阶段
+            inStage = true;
+            result += '\n' + currentIndent + char + '\n' + ' '.repeat(indentLevel + 2);
+            indentLevel += 2;
+          }
+        } 
+        // 处理阶段结束
+        else if (char === '}') {
+          if (indentLevel > 4) {
+            // 这是阶段内的大括号结束
+            indentLevel -= 2;
+            result += '\n' + ' '.repeat(indentLevel) + char;
+          } else {
+            // 这是阶段结束
+            inStage = false;
+            indentLevel -= 2;
+            result += '\n' + currentIndent + char;
+            // 检查是否还有下一个阶段
+            let nextNonSpace = i + 1;
+            while (nextNonSpace < formatted.length && formatted[nextNonSpace] === ' ') {
+              nextNonSpace++;
+            }
+            if (formatted[nextNonSpace] === ',') {
+              result += ',';
+              i = nextNonSpace;
+            }
+          }
+        } 
+        // 处理逗号
+        else if (char === ',') {
+          result += char;
+        } 
+        // 处理空格
+        else if (char === ' ') {
+          // 跳过不必要的空格
+        }
+        // 处理其他字符
+        else {
+          result += char;
+        }
+      } else {
+        // 在字符串或注释中，直接添加字符
+        result += char;
+      }
+      
+      i++;
+    }
+    
+    // 关闭管道数组
+    result += '\n]';
+    
+    return result;
   }
   
   // 执行查询
@@ -760,19 +1061,38 @@
     if (!naturalLanguageInput.trim()) return;
     
     try {
-      // 这里可以实现多个AI建议的逻辑
-      const suggestions = [
-        {
-          sql: `SELECT * FROM users WHERE name LIKE '%${naturalLanguageInput}%'`,
-          confidence: 0.85,
-          explanation: '模糊查询用户名'
-        },
-        {
-          sql: `SELECT * FROM users WHERE name = '${naturalLanguageInput}'`,
-          confidence: 0.75,
-          explanation: '精确查询用户名'
-        }
-      ];
+      // 根据当前数据库类型生成不同的建议
+      let suggestions = [];
+      
+      if (currentDatabaseType === 'mongodb') {
+        // MongoDB建议
+        suggestions = [
+          {
+            sql: `db.users.find({name: {$regex: '${naturalLanguageInput}', $options: 'i'}})`,
+            confidence: 0.85,
+            explanation: '模糊查询用户名'
+          },
+          {
+            sql: `db.users.find({name: '${naturalLanguageInput}'})`,
+            confidence: 0.75,
+            explanation: '精确查询用户名'
+          }
+        ];
+      } else {
+        // SQL数据库建议
+        suggestions = [
+          {
+            sql: `SELECT * FROM users WHERE name LIKE '%${naturalLanguageInput}%'`,
+            confidence: 0.85,
+            explanation: '模糊查询用户名'
+          },
+          {
+            sql: `SELECT * FROM users WHERE name = '${naturalLanguageInput}'`,
+            confidence: 0.75,
+            explanation: '精确查询用户名'
+          }
+        ];
+      }
       
       aiSuggestions = suggestions;
       selectedSuggestion = 0;
