@@ -366,51 +366,125 @@ fn parse_mongodb_projection(projection_str: &str) -> Result<mongodb::bson::Docum
 
 
 
-// 辅助函数：为SQL语句添加LIMIT限制
+// 常量定义
+const MAX_LIMIT: u64 = 1500;
+const DEFAULT_LIMIT: u64 = 200;
+
+// 辅助函数：将SQL字符串解析为单个AST语句
+fn parse_sql(sql: &str) -> Result<sqlparser::ast::Statement, String> {
+    use sqlparser::parser::Parser;
+    use sqlparser::dialect::GenericDialect;
+    
+    let dialect = GenericDialect {};
+    let mut ast = Parser::parse_sql(&dialect, sql)
+        .map_err(|e| format!("SQL 语法错误: {}", e))?;
+    
+    if ast.len() != 1 {
+        return Err("只支持单个 SQL 语句".to_string());
+    }
+    
+    Ok(ast.remove(0))
+}
+
+// 辅助函数：在AST级别应用Limit兜底和限制逻辑
+fn apply_limit_clamping(statement: sqlparser::ast::Statement) -> sqlparser::ast::Statement {
+    use sqlparser::ast::{Statement, Expr, Value};
+    use std::cmp;
+    
+    match statement {
+        // 匹配 SELECT 语句
+        Statement::Query(query_box) => {
+            let mut query = *query_box;
+            
+            // 检查 LIMIT 子句是否存在
+            match &mut query.limit {
+                // 情况 1: LIMIT 已经存在，进行限制 (Clamping)
+                Some(expr) => {
+                    // 尝试解析当前的 LIMIT 表达式，如果解析失败则保持原样（安全第一）
+                    if let Expr::Value(Value::Number(s, _)) = expr {
+                        if let Ok(current_limit) = s.parse::<u64>() {
+                            let clamped_limit = cmp::min(current_limit, MAX_LIMIT);
+                            // 更新 AST 中的 LIMIT 值
+                            *s = clamped_limit.to_string();
+                        }
+                    }
+                }
+                // 情况 2: LIMIT 不存在，插入默认值 (Defaulting)
+                None => {
+                    let default_limit_value = Expr::Value(
+                        Value::Number(DEFAULT_LIMIT.to_string(), false)
+                    );
+                    query.limit = Some(default_limit_value);
+                }
+            }
+            // 返回修改后的 Query 语句
+            Statement::Query(Box::new(query))
+        }
+        // 对于其他类型的语句（如 INSERT, UPDATE, DDL），保持不变
+        _ => statement,
+    }
+}
+
+// 辅助函数：将修改后的AST重构回SQL字符串
+fn reconstruct_sql(statement: &sqlparser::ast::Statement) -> String {
+    statement.to_string()
+}
+
+// 辅助函数：为SQL语句添加LIMIT限制（AST-based方案）
 // 如果没有LIMIT，添加默认LIMIT 200
 // 如果有LIMIT，将其限制在1500以内
 fn add_limit_to_sql(sql: &str) -> String {
-    let sql_lower = sql.to_lowercase();
-    
-    // 检查是否已经包含LIMIT子句
-    if sql_lower.contains(" limit ") {
-        // 提取当前的LIMIT值
-        if let Some(limit_index) = sql_lower.find(" limit ") {
-            let after_limit = &sql[limit_index + 7..];
+    // 尝试使用AST-based方案
+    match parse_sql(sql) {
+        Ok(ast) => {
+            let modified_ast = apply_limit_clamping(ast);
+            reconstruct_sql(&modified_ast)
+        },
+        Err(_) => {
+            // AST解析失败，回退到简单的字符串替换方案
+            let sql_lower = sql.to_lowercase();
             
-            // 查找LIMIT后面的数字
-            let mut limit_value = String::new();
-            for c in after_limit.chars() {
-                if c.is_digit(10) {
-                    limit_value.push(c);
-                } else if c.is_whitespace() {
-                    continue;
+            // 检查是否已经包含LIMIT子句
+            if sql_lower.contains(" limit ") {
+                // 提取当前的LIMIT值
+                if let Some(limit_index) = sql_lower.find(" limit ") {
+                    let after_limit = &sql[limit_index + 7..];
+                    
+                    // 查找LIMIT后面的数字
+                    let mut limit_value = String::new();
+                    for c in after_limit.chars() {
+                        if c.is_digit(10) {
+                            limit_value.push(c);
+                        } else if c.is_whitespace() {
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+                    
+                    // 解析LIMIT值
+                    let mut limit = limit_value.parse::<u32>().unwrap_or(200);
+                    // 限制在1500以内
+                    limit = limit.min(1500);
+                    
+                    // 替换原有的LIMIT子句
+                    let before_limit = &sql[..limit_index + 7];
+                    let after_limit_digit = if let Some(non_digit) = after_limit.find(|c: char| !c.is_digit(10) && !c.is_whitespace()) {
+                        &after_limit[non_digit..]
+                    } else {
+                        ""
+                    };
+                    
+                    format!("{}{}{}", before_limit, limit, after_limit_digit)
                 } else {
-                    break;
+                    // 无法找到LIMIT位置，添加默认LIMIT
+                    format!("{} LIMIT 200", sql)
                 }
-            }
-            
-            // 解析LIMIT值
-            let mut limit = limit_value.parse::<u32>().unwrap_or(200);
-            // 限制在1500以内
-            limit = limit.min(1500);
-            
-            // 替换原有的LIMIT子句
-            let before_limit = &sql[..limit_index + 7];
-            let after_limit_digit = if let Some(non_digit) = after_limit.find(|c: char| !c.is_digit(10) && !c.is_whitespace()) {
-                &after_limit[non_digit..]
             } else {
-                ""
-            };
-            
-            format!("{}{}{}", before_limit, limit, after_limit_digit)
-        } else {
-            // 无法找到LIMIT位置，添加默认LIMIT
-            format!("{} LIMIT 200", sql)
+                // 没有LIMIT，添加默认LIMIT 200
+                format!("{} LIMIT 200", sql)
+            }
         }
-    } else {
-        // 没有LIMIT，添加默认LIMIT 200
-        format!("{} LIMIT 200", sql)
     }
 }
 
@@ -1544,8 +1618,16 @@ async fn execute_query(
             
             // 解析集合名
             let collection_name = if sql.starts_with("db.getCollection(") {
-                // 格式：db.getCollection("collection_name").find()
-                if let Some(collection_match) = sql.split(".find(").next() {
+                // 格式：db.getCollection("collection_name").find() 或 db.getCollection("collection_name").aggregate()
+                let method_split = if sql.contains(".find(") {
+                    ".find("
+                } else if sql.contains(".aggregate(") {
+                    ".aggregate("
+                } else {
+                    "."
+                };
+                
+                if let Some(collection_match) = sql.split(method_split).next() {
                     if let Some(name) = collection_match.split('"').nth(1) {
                         name.to_string()
                     } else {
@@ -1556,8 +1638,16 @@ async fn execute_query(
                     sql.to_string()
                 }
             } else if sql.starts_with("db.") {
-                // 格式：db.collection_name.find()
-                if let Some(collection_part) = sql.split(".find(").next() {
+                // 格式：db.collection_name.find() 或 db.collection_name.aggregate()
+                let method_split = if sql.contains(".find(") {
+                    ".find("
+                } else if sql.contains(".aggregate(") {
+                    ".aggregate("
+                } else {
+                    "."
+                };
+                
+                if let Some(collection_part) = sql.split(method_split).next() {
                     collection_part.split('.').nth(1).unwrap_or_default().to_string()
                 } else {
                     sql.to_string()
@@ -1671,24 +1761,22 @@ async fn execute_query(
                 ))?;
             
             // 获取所有文档
-            let mut documents: Vec<mongodb::bson::Document> = Vec::new();
-            let mut cursor = cursor;
-            while let Some(doc) = cursor.try_next().await.map_err(|e| (
-                StatusCode::BAD_REQUEST,
-                Json(ModelErrorResponse {
-                    error: "query_error".to_string(),
-                    message: format!("MongoDB获取结果失败: {}", e),
-                    details: None,
-                })
-            ))? {
-                documents.push(doc);
-            }
+            let documents: Vec<mongodb::bson::Document> = cursor.try_collect().await
+                .map_err(|e| (
+                    StatusCode::BAD_REQUEST,
+                    Json(ModelErrorResponse {
+                        error: "query_error".to_string(),
+                        message: format!("MongoDB查询结果获取失败: {}", e),
+                        details: None,
+                    })
+                ))?;
             
             // 提取所有唯一列名 - 直接从文档中提取，因为MongoDB驱动已经根据投影参数过滤了字段
             let mut all_columns = std::collections::HashSet::new();
             for doc in &documents {
-                for key in doc.keys() {
-                    all_columns.insert(key.clone());
+                // 使用iter()方法获取键值对，这样可以更明确地获取键的类型
+                for (key, _) in doc.iter() {
+                    all_columns.insert(key.to_string());
                 }
             }
             
