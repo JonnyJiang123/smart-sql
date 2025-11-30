@@ -40,9 +40,12 @@ smart-sql/
 - **多数据库支持**：支持多种主流数据库系统，如MySQL、PostgreSQL、SQLite等，满足不同用户的需求。
 
 ## 页面设计
-
-![alt text](img/image.png)
-
+### mongo查询页面
+![alt text](img/main_mongo.png)
+### mysql查询页面
+![alt text](img/main_mysql.png)
+### 执行计划
+![alt text](img/execute_plan.png)
 ### 页面设计特点
 
 1. 页面主要采用左右结构设计，左侧为数据库列表，右侧为SQL编辑区和结果展示区。
