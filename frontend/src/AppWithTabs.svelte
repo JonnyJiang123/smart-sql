@@ -5,7 +5,8 @@
   import { tabStore } from './stores/tabStore';
   import DatabaseTree from './components/DatabaseTree.svelte';
   import ConnectionManager from './components/ConnectionManager.svelte';
-  import { appSettings, toggleTheme } from './stores/appStore';
+  import SettingsPanel from './components/SettingsPanel.svelte';
+  import { appSettings, toggleTheme, setupSystemThemeListener } from './stores/appStore';
 
   let title = '智能SQLer';
   let subtitle = 'AI数据库管理工具';
@@ -15,6 +16,27 @@
   let showSettings = false;
   let sidebarWidth = 260; // 侧边栏宽度
   let isResizing = false;
+  let sidebarCollapsed = false; // 侧边栏折叠状态
+  let isMobile = false; // 是否为移动端
+  let isTablet = false; // 是否为平板
+
+  // 检测屏幕尺寸
+  function updateScreenSize() {
+    if (typeof window === 'undefined') return;
+    const width = window.innerWidth;
+    isMobile = width < 768; // <768px为移动端
+    isTablet = width >= 768 && width < 1024; // 768-1024px为平板
+    
+    // 移动端默认折叠侧边栏
+    if (isMobile && !sidebarCollapsed) {
+      sidebarCollapsed = true;
+    }
+  }
+
+  // 切换侧边栏折叠状态
+  function toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed;
+  }
 
   // 鼠标拖动调整侧边栏宽度
   function handleMouseDown(_e: MouseEvent) {
@@ -40,64 +62,83 @@
 
   // 连接由ConnectionManager组件管理，不需要在这里加载
   
-  // AI配置状态
-  let aiConfig = {
-    baseURL: '',
-    apiKey: '',
-    model: 'gpt-4'
-  };
-  
-  // 从API获取AI配置
-  async function loadAiConfig() {
-    try {
-      const response = await fetch('/api/ai/config');
-      if (response.ok) {
-        const config = await response.json();
-        aiConfig = {
-          baseURL: config.base_url || '',
-          apiKey: config.api_key || '',
-          model: config.model || 'gpt-4'
-        };
+  // 全局快捷键处理
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    // Ctrl+T: 新建标签页
+    if (event.ctrlKey && event.key === 't') {
+      event.preventDefault();
+      const newTabId = tabStore.createTab();
+      tabStore.setActiveTab(newTabId);
+      return;
+    }
+    
+    // Ctrl+W: 关闭当前标签页
+    if (event.ctrlKey && event.key === 'w') {
+      event.preventDefault();
+      const activeTab = $tabStore.tabs.find(t => t.isActive);
+      if (activeTab) {
+        tabStore.closeTab(activeTab.id);
       }
-    } catch (error) {
-      console.error('获取AI配置失败:', error);
+      return;
+    }
+    
+    // Ctrl+Tab: 切换到下一个标签页
+    if (event.ctrlKey && event.key === 'Tab') {
+      event.preventDefault();
+      const tabs = $tabStore.tabs;
+      const currentIndex = tabs.findIndex(t => t.isActive);
+      if (currentIndex !== -1 && tabs.length > 1) {
+        const nextIndex = (currentIndex + 1) % tabs.length;
+        tabStore.setActiveTab(tabs[nextIndex].id);
+      }
+      return;
+    }
+    
+    // Ctrl+Shift+Tab: 切换到上一个标签页
+    if (event.ctrlKey && event.shiftKey && event.key === 'Tab') {
+      event.preventDefault();
+      const tabs = $tabStore.tabs;
+      const currentIndex = tabs.findIndex(t => t.isActive);
+      if (currentIndex !== -1 && tabs.length > 1) {
+        const prevIndex = currentIndex === 0 ? tabs.length - 1 : currentIndex - 1;
+        tabStore.setActiveTab(tabs[prevIndex].id);
+      }
+      return;
     }
   }
-  
-  // 保存AI配置
-  async function saveAiConfig() {
-    try {
-      const response = await fetch('/api/ai/config', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          base_url: aiConfig.baseURL,
-          api_key: aiConfig.apiKey,
-          model: aiConfig.model
-        })
-      });
-      
-      if (response.ok) {
-        console.log('保存AI配置成功');
-        showSettings = false;
-      } else {
-        console.error('保存AI配置失败');
-      }
-    } catch (error) {
-      console.error('保存AI配置失败:', error);
-    }
-  }
-  
-  // 组件挂载时加载AI配置和主题
+
+  // 组件挂载时注册快捷键和设置主题
   onMount(() => {
-    loadAiConfig();
-    // 设置初始主题
+    // 初始化屏幕尺寸检测
+    updateScreenSize();
+    window.addEventListener('resize', updateScreenSize);
+    
+    // 注册全局快捷键
+    window.addEventListener('keydown', handleGlobalKeydown);
+    
+    // 设置系统主题监听器
+    const cleanupThemeListener = setupSystemThemeListener();
+    
+    // 初始化时应用保存的主题
     if (typeof document !== 'undefined') {
       document.documentElement.classList.toggle('dark', $appSettings.theme === 'dark');
     }
+    
+    return () => {
+      // 清理事件监听器
+      window.removeEventListener('resize', updateScreenSize);
+      window.removeEventListener('keydown', handleGlobalKeydown);
+      // 清理主题监听器
+      if (cleanupThemeListener) {
+        cleanupThemeListener();
+      }
+    };
   });
+
+  // 响应式监听主题变化（Tailwind darkMode: 'class'）
+  $: if (typeof document !== 'undefined') {
+    document.documentElement.classList.toggle('dark', $appSettings.theme === 'dark');
+  }
 </script>
 
 <!-- 主容器 -->
@@ -105,50 +146,81 @@
   <!-- 顶部工具栏 -->
   <header class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-2.5 shadow-sm flex items-center justify-between">
     <div class="flex items-center space-x-3">
+        <!-- 移动端侧边栏切换按钮 -->
+        {#if isMobile || isTablet}
+          <button
+            on:click={toggleSidebar}
+            class="text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+            aria-label="切换侧边栏"
+          >
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+            </svg>
+          </button>
+        {/if}
         <h1 class="text-lg font-bold text-gray-900 dark:text-white">{title}</h1>
         <span class="text-xs text-gray-500 dark:text-gray-400 hidden md:inline">{subtitle}</span>
       </div>
     
     <div class="flex items-center space-x-2">
+        <!-- 桌面端按钮：显示文字 -->
         <button 
           on:click={() => showConnectionManager = !showConnectionManager}
           class="text-xs bg-blue-900/80 hover:bg-blue-800 text-blue-300 px-3 py-1.5 rounded-md transition-colors flex items-center space-x-1"
         >
           <span>🔌</span>
-          <span>连接管理</span>
+          <span class="hidden sm:inline">连接管理</span>
         </button>
         <button 
           on:click={toggleTheme}
           class="text-xs bg-gray-700/80 hover:bg-gray-600 text-gray-300 px-3 py-1.5 rounded-md transition-colors"
+          aria-label="切换主题"
         >
-          {$appSettings.theme === 'light' ? '🌙 深色' : '☀️ 浅色'}
+          {$appSettings.theme === 'light' ? '🌙' : '☀️'}
+          <span class="hidden sm:inline ml-1">{$appSettings.theme === 'light' ? '深色' : '浅色'}</span>
         </button>
         <button 
             on:click={() => showSettings = !showSettings}
             class="text-xs bg-gray-700/80 hover:bg-gray-600 text-gray-300 px-3 py-1.5 rounded-md transition-colors"
+            aria-label="设置"
           >
-            ⚙️ 设置
+            ⚙️
+            <span class="hidden sm:inline ml-1">设置</span>
           </button>
       </div>
   </header>
 
   <!-- 主内容区 -->
-  <div class="flex flex-1 overflow-hidden">
+  <div class="flex flex-1 overflow-hidden relative">
     <!-- 左侧数据库树 -->
     <aside 
-      class="bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden"
-      style="width: {sidebarWidth}px; min-width: 200px; max-width: 500px;"
+      class="bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden transition-all duration-300 {isMobile ? 'absolute inset-y-0 left-0 z-30 shadow-xl' : ''} {sidebarCollapsed ? (isMobile ? '-translate-x-full' : 'w-0') : ''}"
+      style="{!sidebarCollapsed ? `width: ${isMobile ? '80vw' : sidebarWidth + 'px'}; min-width: ${isMobile ? 'auto' : '200px'}; max-width: ${isMobile ? '80vw' : '500px'};` : ''}"
     >
       <!-- 数据库树头部 -->
       <div class="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">数据库</h2>
-        <button 
-          on:click={() => showConnectionManager = !showConnectionManager}
-          class="text-xs text-blue-400 hover:text-blue-300 font-medium"
-          title="连接管理"
-        >
-          +
-        </button>
+        <div class="flex items-center space-x-2">
+          <button 
+            on:click={() => showConnectionManager = !showConnectionManager}
+            class="text-xs text-blue-400 hover:text-blue-300 font-medium"
+            title="连接管理"
+          >
+            +
+          </button>
+          <!-- 移动端关闭按钮 -->
+          {#if isMobile}
+            <button
+              on:click={toggleSidebar}
+              class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              aria-label="关闭侧边栏"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          {/if}
+        </div>
       </div>
       
       <!-- 数据库树内容 -->
@@ -157,13 +229,24 @@
       </div>
     </aside>
 
-    <!-- 可调整大小的分隔条 -->
-    <button 
-      type="button"
-      aria-label="调整侧边栏宽度"
-      class="w-1 bg-gray-800 hover:bg-blue-500 cursor-col-resize transition-colors border-0 p-0"
-      on:mousedown={handleMouseDown}
-    ></button>
+    <!-- 移动端遮罩层 -->
+    {#if isMobile && !sidebarCollapsed}
+      <button
+        class="fixed inset-0 bg-black/50 z-20"
+        on:click={toggleSidebar}
+        aria-label="关闭侧边栏"
+      ></button>
+    {/if}
+
+    <!-- 可调整大小的分隔条（桌面端才显示） -->
+    {#if !isMobile && !sidebarCollapsed}
+      <button 
+        type="button"
+        aria-label="调整侧边栏宽度"
+        class="w-1 bg-gray-800 hover:bg-blue-500 cursor-col-resize transition-colors border-0 p-0"
+        on:mousedown={handleMouseDown}
+      ></button>
+    {/if}
 
     <!-- 右侧主工作区 -->
     <main class="flex-1 flex flex-col overflow-hidden bg-white dark:bg-gray-900">
@@ -208,106 +291,8 @@
   </div>
 {/if}
 
-<!-- 设置弹窗 -->
-{#if showSettings}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <div 
-    class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" 
-  >
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <div 
-      class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[85vh] overflow-hidden" 
-    >
-      <div class="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">设置中心</h2>
-        <button 
-          on:click={() => showSettings = false} 
-          class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl leading-none"
-        >
-          ✕
-        </button>
-      </div>
-      <div class="p-4 overflow-y-auto" style="max-height: calc(85vh - 60px);">
-        <!-- AI配置 -->
-        <div class="mb-6">
-          <h3 class="text-md font-semibold text-gray-800 dark:text-gray-200 mb-4">AI配置</h3>
-          
-          <div class="space-y-4">
-            <!-- Base URL -->
-            <div>
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Base URL
-              </label>
-              <input 
-                type="text" 
-                bind:value={aiConfig.baseURL}
-                placeholder="例如: https://api.openai.com/v1" 
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
-              />
-            </div>
-            
-            <!-- API Key -->
-            <div>
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                API Key
-              </label>
-              <input 
-                type="password" 
-                bind:value={aiConfig.apiKey}
-                placeholder="输入API密钥" 
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
-              />
-            </div>
-            
-            <!-- Model -->
-            <div>
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                模型
-              </label>
-              <div class="relative">
-                <input 
-                  type="text" 
-                  bind:value={aiConfig.model}
-                  list="ai-models"
-                  placeholder="输入模型名称，如: gpt-4, gpt-3.5-turbo"
-                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
-                />
-                <datalist id="ai-models">
-                  <option value="gpt-4">
-                  <option value="gpt-3.5-turbo">
-                  <option value="claude-3-opus">
-                  <option value="claude-3-sonnet">
-                  <option value="gemini-pro">
-                  <option value="gpt-4o">
-                  <option value="gpt-4-turbo">
-                  <option value="claude-3-haiku">
-                </datalist>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- 保存按钮 -->
-        <div class="flex justify-end space-x-2 pt-4 border-t border-gray-200 dark:border-gray-700">
-          <button 
-            on:click={() => showSettings = false}
-            class="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
-          >
-            取消
-          </button>
-          <button 
-            on:click={saveAiConfig}
-            class="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 rounded-md transition-colors"
-          >
-            保存
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
+<!-- 设置面板 -->
+<SettingsPanel bind:show={showSettings} />
 
 <style>
   :global(body) {

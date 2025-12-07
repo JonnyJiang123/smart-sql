@@ -3,9 +3,20 @@
   import { tick } from 'svelte';
   import type { SqlQueryResult } from '../types';
   
+  import EditableTable from './EditableTable.svelte';
+  import Skeleton from './Skeleton.svelte';
+  
   export let result: SqlQueryResult | null = null;
   export let isLoading = false;
   export let errorMessage = '';
+  export let sql: string = '';
+  
+  let isEditMode = false;
+  let editableTableName: string = '';
+  $: if (sql) {
+    const m = sql.match(/from\s+([\w.]+)/i);
+    if (m) editableTableName = m[1];
+  }
   
   // 分页相关状态
   let currentPage = 1;
@@ -306,13 +317,13 @@
   }
 </script>
 
-<div class="query-results h-full flex flex-col bg-gray-900 border border-gray-700 rounded-lg overflow-hidden">
-  <!-- 工具栏 -->
-  <div class="flex items-center justify-between p-3 border-b border-gray-700 bg-gray-800">
-    <div class="flex items-center space-x-3">
+<div class="query-results h-full flex flex-col bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+  <!-- 工具栏（响应式布局） -->
+  <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 gap-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+    <div class="flex items-center space-x-3 flex-wrap gap-2 w-full sm:w-auto">
       <!-- 结果统计 -->
       {#if result}
-        <div class="text-sm text-gray-400">
+        <div class="text-sm text-gray-600 dark:text-gray-400">
           <span class="font-semibold">{sortedRows.length}</span> 行
           {#if result.execution_time_ms}
             · <span class="text-green-400">{result.execution_time_ms}ms</span>
@@ -321,17 +332,17 @@
       {/if}
       
       <!-- 搜索框 -->
-      <div class="relative">
+      <div class="relative flex-1 min-w-[150px] sm:flex-initial">
         <input
           type="text"
           bind:value={filterText}
           placeholder="搜索..."
-          class="w-48 px-3 py-1.5 text-sm bg-gray-700 text-gray-300 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          class="w-full sm:w-48 px-3 py-1.5 text-sm bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         {#if filterText}
           <button
             on:click={() => filterText = ''}
-            class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300"
+            class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
             title="清除搜索"
           >
             ✕
@@ -340,79 +351,92 @@
       </div>
     </div>
     
-    <div class="flex items-center space-x-2">
+    <div class="flex items-center space-x-2 w-full sm:w-auto">
       <!-- 复制按钮 -->
       <button
         on:click={copyToClipboard}
         disabled={!result || paginatedRows.length === 0}
-        class="px-3 py-1.5 bg-gray-700 text-white text-sm rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        class="flex-1 sm:flex-initial px-3 py-1.5 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-white text-sm rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         title="复制到剪贴板"
       >
-        📋 复制
+        📋 <span class="hidden sm:inline">复制</span>
       </button>
       
       <!-- 导出按钮 -->
-      <div class="relative">
+      <div class="relative flex-1 sm:flex-initial">
         <button
           on:click={() => showExportMenu = !showExportMenu}
           disabled={!result || result.rows.length === 0 || isExporting}
-          class="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          class="w-full px-3 py-1.5 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           title="导出数据"
         >
           📥 {isExporting ? '导出中...' : '导出'}
         </button>
         
         {#if showExportMenu}
-          <div class="absolute right-0 mt-2 w-32 bg-gray-800 border border-gray-700 rounded-md shadow-xl z-20">
+          <div class="absolute right-0 mt-2 w-32 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-xl z-20">
             <button
               on:click={() => exportData('csv')}
-              class="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700"
+              class="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               CSV
             </button>
             <button
               on:click={() => exportData('json')}
-              class="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700"
+              class="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               JSON
             </button>
             <button
               on:click={() => exportData('excel')}
-              class="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700"
+              class="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               Excel
             </button>
           </div>
         {/if}
       </div>
+      
+      <!-- 编辑模式切换 -->
+      <button
+        on:click={() => isEditMode = !isEditMode}
+        disabled={!result || result.rows.length === 0}
+        class="flex-1 sm:flex-initial px-3 py-1.5 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        title="切换编辑模式"
+      >
+        ✏️ <span class="hidden sm:inline">{isEditMode ? '退出编辑' : '编辑模式'}</span>
+      </button>
     </div>
     
+    <!-- 导出进度条（小屏幕放到下一行） -->
     {#if isExporting}
-      <div class="flex items-center space-x-3 text-xs text-gray-400">
+      <div class="flex items-center space-x-3 text-xs text-gray-600 dark:text-gray-400 w-full sm:w-auto">
         <span class="font-medium">
           {activeExportFormat ? `正在导出 ${exportFormatLabels[activeExportFormat]}` : '正在导出'}
         </span>
-        <div class="w-32 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+        <div class="flex-1 sm:w-32 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
           <div
             class="h-full bg-blue-400 transition-all duration-150"
             style={`width: ${exportProgress}%;`}
           ></div>
         </div>
         {#if exportStatus}
-          <span class="text-gray-500">{exportStatus}</span>
+          <span class="text-gray-600 dark:text-gray-400 hidden sm:inline">{exportStatus}</span>
         {/if}
       </div>
     {/if}
   </div>
   
-  <!-- 结果表格容器 -->
-  <div class="flex-1 overflow-auto">
+  <!-- 结果表格容器（支持横向滚动） -->
+  <div class="flex-1 overflow-auto relative">
+    <!-- 小屏幕横向滚动提示 -->
+    <div class="sm:hidden sticky top-0 left-0 z-20 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 text-xs px-3 py-1 border-b border-yellow-200 dark:border-yellow-800">
+      ←️ 横向滑动查看更多列
+    </div>
     {#if isLoading}
-      <div class="flex items-center justify-center h-full">
-        <div class="text-center">
-          <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-          <p class="mt-4 text-gray-600 dark:text-gray-400">执行查询中...</p>
-        </div>
+      <!-- 骨架屏加载状态 -->
+      <div class="p-4">
+        <Skeleton variant="table" rows={8} animation="wave" />
       </div>
     {:else if errorMessage}
       <div class="flex items-center justify-center h-full">
@@ -423,52 +447,70 @@
         </div>
       </div>
     {:else if result && result.rows.length > 0}
-      <table class="w-full border-collapse">
-        <!-- 表头 -->
-        <thead class="bg-gray-100 dark:bg-gray-900 sticky top-0 z-10">
-          <tr>
-            {#each result.columns as column}
-              <th class="px-4 py-3 border-b border-r border-gray-300 dark:border-gray-600 last:border-r-0" style="text-align: center;">
-                <button
-                  on:click={() => handleSort(column)}
-                  class="flex items-center justify-center space-x-1 text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider hover:text-blue-600 dark:hover:text-blue-400 w-full mx-auto"
-                  title="点击排序"
-                >
-                  <span>{column}</span>
-                  {#if sortColumn === column}
-                    <span class="text-blue-600 dark:text-blue-400">
-                      {sortDirection === 'asc' ? '↑' : '↓'}
-                    </span>
-                  {/if}
-                </button>
-              </th>
-            {/each}
-          </tr>
-        </thead>
-        
-        <!-- 表格数据 -->
-        <tbody>
-          {#each paginatedRows as row}
-            <tr class="border-b border-gray-700 hover:bg-gray-800/50 transition-colors">
-              {#each row as cell}
-                {@const isNull = cell === null || cell === undefined}
-                <td 
-                  class="px-4 py-2 text-sm border-r border-gray-700 last:border-r-0"
-                  class:text-gray-500={isNull}
-                  class:italic={isNull}
-                  class:text-white={!isNull}
-                  style="text-align: center;"
-                  title={formatCellValue(cell)}
-                >
-                  <div class="truncate" style="text-align: center;">
-                    {formatCellValue(cell)}
-                  </div>
-                </td>
+      {#if isEditMode}
+        <div class="p-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+          <div class="flex items-center space-x-2">
+            <label class="text-xs text-gray-600 dark:text-gray-400">目标表:</label>
+            <input
+              type="text"
+              bind:value={editableTableName}
+              placeholder="请输入要更新的表名"
+              class="px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+            />
+          </div>
+        </div>
+        <EditableTable columns={result.columns} rows={result.rows} tableName={editableTableName} />
+      {:else}
+      <!-- 表格外层容器：小屏幕横向滚动 -->
+      <div class="overflow-x-auto">
+        <table class="w-full border-collapse min-w-max">
+          <!-- 表头 -->
+          <thead class="bg-gray-100 dark:bg-gray-900 sticky top-0 z-10">
+            <tr>
+              {#each result.columns as column}
+                <th class="px-4 py-3 border-b border-r border-gray-300 dark:border-gray-600 last:border-r-0 min-w-[120px] whitespace-nowrap" style="text-align: center;">
+                  <button
+                    on:click={() => handleSort(column)}
+                    class="flex items-center justify-center space-x-1 text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider hover:text-blue-600 dark:hover:text-blue-400 w-full mx-auto rounded focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+                    title="点击排序"
+                  >
+                    <span>{column}</span>
+                    {#if sortColumn === column}
+                      <span class="text-blue-600 dark:text-blue-400">
+                        {sortDirection === 'asc' ? '↑' : '↓'}
+                      </span>
+                    {/if}
+                  </button>
+                </th>
               {/each}
             </tr>
-          {/each}
-        </tbody>
-      </table>
+          </thead>
+          
+          <!-- 表格数据 -->
+          <tbody>
+            {#each paginatedRows as row}
+              <tr class="odd:bg-gray-50 dark:odd:bg-gray-900/30 border-b border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
+                {#each row as cell}
+                  {@const isNull = cell === null || cell === undefined}
+                  <td 
+                    class="px-4 py-2 text-sm border-r border-gray-200 dark:border-gray-700 last:border-r-0 text-gray-800 dark:text-white min-w-[120px] whitespace-nowrap"
+                    class:text-gray-500={isNull}
+                    class:italic={isNull}
+                    
+                    style="text-align: center;"
+                    title={formatCellValue(cell)}
+                  >
+                    <div class="max-w-xs truncate" style="text-align: center;">
+                      {formatCellValue(cell)}
+                    </div>
+                  </td>
+                {/each}
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
     {:else if result && result.rows.length === 0}
       <div class="flex items-center justify-center h-full">
         <div class="text-center">
@@ -490,16 +532,16 @@
   
   <!-- 分页控制 -->
   {#if result && result.rows.length > 0 && totalPages > 1}
-    <div class="flex items-center justify-between px-4 py-3 border-t border-gray-700 bg-gray-800">
+    <div class="flex items-center justify-between px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
       <div class="flex items-center space-x-2">
-        <span class="text-sm text-gray-400">
+        <span class="text-sm text-gray-600 dark:text-gray-400">
           显示 {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, sortedRows.length)} / 共{sortedRows.length} 行
         </span>
         
         <select
           bind:value={pageSize}
           on:change={() => currentPage = 1}
-          class="px-2 py-1 text-sm bg-gray-700 text-gray-300 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          class="px-2 py-1 text-sm bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value={25}>25 / 页</option>
           <option value={50}>50 / 页</option>
@@ -512,7 +554,7 @@
         <button
           on:click={goToFirstPage}
           disabled={currentPage === 1}
-          class="px-2 py-1 text-sm bg-gray-700 text-gray-300 border border-gray-600 rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          class="px-2 py-1 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
           title="首页"
         >
           ⏮
@@ -521,27 +563,27 @@
         <button
           on:click={goToPreviousPage}
           disabled={currentPage === 1}
-          class="px-3 py-1 text-sm bg-gray-700 text-gray-300 border border-gray-600 rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          class="px-3 py-1 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
           title="上一页"
         >
           ◀ 上一页
         </button>
         
-        <span class="text-sm text-gray-400">
+        <span class="text-sm text-gray-600 dark:text-gray-400">
           第
           <input
             type="number"
             bind:value={currentPage}
             min="1"
             max={totalPages}
-            class="w-16 px-2 py-1 text-center bg-gray-700 text-gray-300 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            class="w-16 px-2 py-1 text-center bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           /> / {totalPages} 页
         </span>
         
         <button
           on:click={goToNextPage}
           disabled={currentPage === totalPages}
-          class="px-3 py-1 text-sm bg-gray-700 text-gray-300 border border-gray-600 rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          class="px-3 py-1 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
           title="下一页"
         >
           下一页 ▶
@@ -550,7 +592,7 @@
         <button
           on:click={goToLastPage}
           disabled={currentPage === totalPages}
-          class="px-2 py-1 text-sm bg-gray-700 text-gray-300 border border-gray-600 rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          class="px-2 py-1 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
           title="末页"
         >
           ⏭

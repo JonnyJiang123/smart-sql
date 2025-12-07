@@ -3,12 +3,14 @@
   import { getDatabaseInfo, getTableStructure } from '../services/api';
   import type { DbTreeNode, DatabaseConnection } from '../types';
   import DatabaseTreeNode from './DatabaseTreeNode.svelte';
+  import Skeleton from './Skeleton.svelte';
 
   let treeData: DbTreeNode[] = [];
   let isLoading = false;
   let errorMessage = '';
   let activeConnectionIds: number[] = [];
   let connections: DatabaseConnection[] = [];
+  let searchQuery = '';
 
   appStore.subscribe(async (state) => {
     const idsChanged = JSON.stringify(state.activeConnectionIds.sort()) !== JSON.stringify(activeConnectionIds.sort());
@@ -233,6 +235,31 @@
     return { tableName: null };
   }
 
+  // 过滤与高亮所需：生成过滤后的树
+  $: filteredTreeData = searchQuery.trim() ? filterNodes(treeData, searchQuery) : treeData;
+
+  function filterNodes(nodes: DbTreeNode[], query: string): DbTreeNode[] {
+    const q = query.trim().toLowerCase();
+    if (!q) return nodes;
+    function deepCloneAndFilter(node: DbTreeNode): DbTreeNode | null {
+      const name = (node.name || '').toLowerCase();
+      const matchSelf = name.includes(q);
+      let filteredChildren: DbTreeNode[] = [];
+      if (node.children && node.children.length > 0) {
+        filteredChildren = node.children
+          .map(child => deepCloneAndFilter(child))
+          .filter((c): c is DbTreeNode => c !== null);
+      }
+      if (matchSelf || filteredChildren.length > 0) {
+        return { ...node, expanded: node.expanded || filteredChildren.length > 0, children: filteredChildren };
+      }
+      return null;
+    }
+    return nodes
+      .map(n => deepCloneAndFilter(n))
+      .filter((n): n is DbTreeNode => n !== null);
+  }
+
   // 处理打开表事件
   function handleOpenTable(event: CustomEvent<{ tableName: string }>) {
     const tableName = event.detail.tableName;
@@ -248,37 +275,61 @@
   }
 </script>
 
-<div class="database-tree h-full overflow-y-auto bg-gray-900 border-r border-gray-800">
+<div class="database-tree h-full overflow-y-auto bg-white dark:bg-slate-900/80 border-r border-gray-200 dark:border-slate-800/70 text-slate-800 dark:text-slate-200 backdrop-blur-sm" aria-busy={isLoading} role="region" aria-label="数据库连接树">
+  <div class="sticky top-0 z-10 px-3 py-2 border-b border-gray-200 dark:border-slate-800/70 bg-white dark:bg-slate-900/80 backdrop-blur-sm">
+    <div class="flex items-center justify-between space-x-2">
+      <div class="text-xs uppercase tracking-wider text-slate-600 dark:text-slate-400">数据库</div>
+      <div class="flex items-center gap-2">
+        <input
+          type="text"
+          placeholder="搜索(名称匹配)"
+          bind:value={searchQuery}
+          class="h-7 w-40 px-2 text-xs rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        />
+        {#if treeData.length > 0}
+          <div class="text-[10px] text-slate-500">连接数: {treeData.length}</div>
+        {/if}
+      </div>
+    </div>
+  </div>
+
   {#if isLoading}
-    <div class="p-4 flex items-center justify-center">
-      <div class="flex items-center space-x-2 text-gray-400">
-        <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-        </svg>
-        <span class="text-sm">加载中...</span>
+    <!-- 数据库树骨架屏 -->
+    <div class="p-4 space-y-3">
+      <Skeleton variant="rectangular" width="100%" height="40px" animation="pulse" />
+      <div class="pl-4 space-y-2">
+        <Skeleton variant="rectangular" width="90%" height="32px" animation="pulse" />
+        <div class="pl-4 space-y-2">
+          <Skeleton variant="rectangular" width="80%" height="24px" animation="pulse" />
+          <Skeleton variant="rectangular" width="80%" height="24px" animation="pulse" />
+          <Skeleton variant="rectangular" width="80%" height="24px" animation="pulse" />
+        </div>
+      </div>
+      <Skeleton variant="rectangular" width="100%" height="40px" animation="pulse" />
+      <div class="pl-4 space-y-2">
+        <Skeleton variant="rectangular" width="85%" height="32px" animation="pulse" />
       </div>
     </div>
   {:else if errorMessage}
-    <div class="m-3 p-3 bg-red-900/30 border border-red-800 text-red-400 rounded-md text-sm">
+    <div class="m-3 p-3 bg-red-50 dark:bg-red-900/30 border border-red-300 dark:border-red-800/70 text-red-700 dark:text-red-300 rounded-md text-sm ring-1 ring-red-700/20">
       <div class="font-medium mb-1">⚠️ 加载失败</div>
       <div class="text-xs">{errorMessage}</div>
     </div>
   {:else if treeData.length > 0}
-    <div class="py-2">
-      {#each treeData as rootNode (rootNode.id)}
-        <DatabaseTreeNode node={rootNode} on:toggle={handleToggle} on:openTable={handleOpenTable} on:designTable={handleDesignTable} />
+    <div class="py-2" role="tree" aria-label="连接列表">
+      {#each filteredTreeData as rootNode (rootNode.id)}
+        <DatabaseTreeNode node={rootNode} searchQuery={searchQuery} on:toggle={handleToggle} on:openTable={handleOpenTable} on:designTable={handleDesignTable} />
       {/each}
     </div>
   {:else}
-    <div class="p-4 text-center">
-      <div class="text-gray-500 mb-2">
+    <div class="p-6 text-center">
+      <div class="text-gray-500 dark:text-slate-500 mb-2">
         <svg class="w-12 h-12 mx-auto opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"></path>
         </svg>
       </div>
-      <p class="text-sm text-gray-400 mb-1">没有活动连接</p>
-      <p class="text-xs text-gray-500">点击顶部按钮创建连接</p>
+      <p class="text-sm text-gray-700 dark:text-slate-400 mb-1">没有活动连接</p>
+      <p class="text-xs text-gray-500 dark:text-slate-500">点击顶部按钮创建连接</p>
     </div>
   {/if}
 </div>

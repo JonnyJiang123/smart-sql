@@ -2,6 +2,7 @@
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
   import { generateSql, getDatabaseInfo, getTableStructure } from '../services/api';
   import { appStore, addToQueryHistory } from '../stores/appStore';
+  import { aiHistoryStore } from '../stores/aiHistoryStore';
   import type { SqlGenerationResult, TableSchema } from '../types';
   
   // CodeMirror 6 imports
@@ -783,8 +784,8 @@
     
     for (const method of methods) {
       // 使用正则表达式匹配方法调用，考虑嵌套括号的情况
-      const regex = new RegExp(`\\.${method}\\(([^)]+)\\)`, 'g');
-      formatted = formatted.replace(regex, (match, content) => {
+      const regex = new RegExp(`\.${method}\(([^)]+)\)`, 'g');
+      formatted = formatted.replace(regex, (_match, content) => {
         // 对于aggregate方法，特殊处理管道数组
         if (method === 'aggregate' && content.trim().startsWith('[')) {
           // 格式化聚合管道
@@ -1005,6 +1006,7 @@
     
     setLoading(true);
     hideError();
+    const startTime = Date.now();
     
     try {
       const result: SqlGenerationResult = await generateSql({
@@ -1012,6 +1014,8 @@
         database_schema: '', // 后端会自动获取当前连接的schema
         database_type: currentDatabaseType // 使用当前活动连接的数据库类型
       });
+      
+      const executionTime = Date.now() - startTime;
       
       if (result.sql && editorView) {
         if (slashCommandInput !== undefined) {
@@ -1045,11 +1049,34 @@
         updateStatus();
         
         addToQueryHistory(result.sql, undefined, true);
+        
+        // 保存到 AI 历史记录
+        aiHistoryStore.addHistory({
+          query: nlInput,
+          generatedSql: result.sql,
+          explanation: result.explanation,
+          status: 'success',
+          executionTime,
+          executed: false
+        });
+        
         dispatch('ai-generated', { sql: result.sql, naturalLanguage: nlInput });
       }
       
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'AI生成失败';
+      const executionTime = Date.now() - startTime;
+      
+      // 保存失败记录到历史
+      aiHistoryStore.addHistory({
+        query: nlInput,
+        generatedSql: '',
+        status: 'error',
+        errorMessage: errorMsg,
+        executionTime,
+        executed: false
+      });
+      
       showError(errorMsg);
     } finally {
       setLoading(false);
@@ -1500,6 +1527,44 @@
   
   :global(.cm-scroller) {
     overflow: auto;
+  }
+  
+  .animate-spin {
+    animation: spin 1s linear infinite;
+  }
+  
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .sql-editor {
+    min-height: 300px;
+  }
+  
+  :global(.cm-editor) {
+    height: 100%;
+  }
+  
+  :global(.cm-scroller) {
+    overflow: auto;
+  }
+  
+  /* Light/Dark 主题下的 CodeMirror 背景与文字颜色覆盖 */
+  :global(.sql-editor .cm-editor),
+  :global(.sql-editor .cm-content),
+  :global(.sql-editor .cm-gutters) {
+    background-color: #ffffff;
+    color: #1f2937;
+  }
+  :global(.dark .sql-editor .cm-editor),
+  :global(.dark .sql-editor .cm-content),
+  :global(.dark .sql-editor .cm-gutters) {
+    background-color: #1e1e1e;
+    color: #d4d4d4;
   }
   
   .animate-spin {

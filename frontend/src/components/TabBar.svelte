@@ -166,12 +166,12 @@
   });
 </script>
 
-<div class="tab-bar flex items-center bg-gray-800 border-b border-gray-700 overflow-x-auto">
+<div class="tab-bar flex items-center bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
   <div class="flex items-center min-w-0">
     {#each tabs as tab, index (tab.id)}
       <div
-        class="tab-item flex items-center px-4 py-2 border-r border-gray-700 cursor-pointer transition-colors duration-150 min-w-0 flex-shrink-0
-          {tab.isActive ? 'bg-gray-900 border-b-2 border-b-blue-500' : 'bg-gray-800 hover:bg-gray-700'}
+        class="tab-item flex items-center px-4 py-2 border-r border-gray-200 dark:border-gray-700 cursor-pointer transition-colors duration-150 min-w-0 flex-shrink-0
+          {tab.isActive ? 'bg-gray-100 dark:bg-gray-900 border-b-2 border-b-blue-500' : 'bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700'}
           {dragOverIndex === index ? 'border-l-2 border-l-blue-500' : ''}"
         draggable="true"
         on:dragstart={(e) => handleDragStart(tab.id, index, e)}
@@ -197,7 +197,7 @@
       >
         <!-- 固定图标 -->
         {#if tab.isPinned}
-          <svg class="w-3 h-3 mr-1 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg class="w-3 h-3 mr-1 text-gray-500 dark:text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 17v5M9 10V7a3 3 0 0 1 3-3h0a3 3 0 0 1 3 3v3M9 10l-3 3v4h12v-4l-3-3M9 10h6"></path>
           </svg>
         {/if}
@@ -210,18 +210,18 @@
         {/if}
 
         <!-- 标签页名称 -->
-        <span class="text-sm font-medium text-gray-300 truncate max-w-[150px]">
+        <span class="text-sm font-medium text-gray-700 dark:text-gray-300 truncate max-w-[150px]">
           {tab.name}
         </span>
 
         <!-- 关闭按钮 -->
         {#if !tab.isPinned}
           <button
-            class="ml-2 p-0.5 rounded hover:bg-gray-600 transition-colors opacity-0 group-hover:opacity-100 tab-close-btn"
+            class="ml-2 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors opacity-0 group-hover:opacity-100 tab-close-btn"
             on:click={(e) => handleTabClose(tab.id, e)}
             title="关闭标签页 (Ctrl+W)"
           >
-            <svg class="w-3 h-3 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg class="w-3 h-3 text-gray-500 dark:text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>
             </svg>
@@ -232,7 +232,7 @@
     
     <!-- 新建标签页按钮 -->
     <button
-      class="px-3 py-2 text-gray-400 hover:bg-gray-700 transition-colors flex-shrink-0"
+      class="px-3 py-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex-shrink-0"
       on:click={handleNewTab}
       title="新建标签页 (Ctrl+T)"
     >
@@ -246,7 +246,7 @@
   <!-- 右键菜单 -->
   {#if contextMenu.visible && contextMenu.tabId}
     <div
-      class="fixed z-50 bg-gray-800 shadow-lg rounded-md border border-gray-700 py-1 min-w-[180px] backdrop-blur-sm"
+      class="fixed z-50 bg-white dark:bg-gray-800 shadow-lg rounded-md border border-gray-200 dark:border-gray-700 py-1 min-w-[180px] backdrop-blur-sm"
       style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
       on:click|stopPropagation
       on:keydown={(e) => {
@@ -260,36 +260,36 @@
     >
       <button
         type="button"
-        class="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700"
+        class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
         on:click={() => handleContextAction('rename')}
       >
         📝 重命名
       </button>
       <button
         type="button"
-        class="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700"
+        class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
         on:click={() => handleContextAction('pin')}
       >
         {tabs.find(t => t.id === contextMenu.tabId)?.isPinned ? '📌 取消固定' : '📌 固定标签页'}
       </button>
-      <div class="border-t border-gray-700 my-1"></div>
+      <div class="border-t border-gray-200 dark:border-gray-700 my-1"></div>
       <button
         type="button"
-        class="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700"
+        class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
         on:click={() => handleContextAction('close')}
       >
         ✕ 关闭
       </button>
       <button
         type="button"
-        class="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700"
+        class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
         on:click={() => handleContextAction('closeOthers')}
       >
         ✕ 关闭其他
       </button>
       <button
         type="button"
-        class="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700"
+        class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
         on:click={() => handleContextAction('closeAll')}
       >
         ✕ 关闭所有

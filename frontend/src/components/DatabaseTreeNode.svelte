@@ -4,6 +4,7 @@
 
   export let node: DbTreeNode;
   export let level = 0;
+  export let searchQuery = '';
   
   const dispatch = createEventDispatcher();
 
@@ -124,27 +125,39 @@
   function getNodeStyle(type: DbTreeNode['type']) {
     switch (type) {
       case 'connection':
-        return 'font-semibold text-blue-400';
+        return 'font-semibold text-blue-600 dark:text-blue-400';
       case 'database':
-        return 'font-medium text-green-400';
+        return 'font-medium text-green-600 dark:text-green-400';
       case 'table':
       case 'collection':
-        return 'text-white font-medium';
+        return 'text-slate-700 dark:text-white font-medium';
       case 'columns-folder':
       case 'indexes-folder':
       case 'foreignkeys-folder':
       case 'triggers-folder':
-        return 'text-gray-400 text-sm';
+        return 'text-slate-500 dark:text-gray-400 text-sm';
       case 'column':
       case 'index':
       case 'foreignkey':
       case 'trigger':
-        return 'text-gray-400 text-xs';
+        return 'text-slate-500 dark:text-gray-400 text-xs';
       default:
-        return 'text-gray-400';
+        return 'text-slate-600 dark:text-gray-400';
     }
   }
 
+  // 高亮匹配的名称（简易实现）
+  function highlightName(name: string, query: string): string {
+    const q = (query || '').trim().toLowerCase();
+    if (!q) return name;
+    const lower = name.toLowerCase();
+    const i = lower.indexOf(q);
+    if (i < 0) return name;
+    const before = name.slice(0, i);
+    const match = name.slice(i, i + q.length);
+    const after = name.slice(i + q.length);
+    return `${before}<span class="bg-yellow-100 dark:bg-yellow-900/40 rounded px-0.5">${match}</span>${after}`;
+  }
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -160,14 +173,14 @@
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div 
-    class="flex items-center py-1 rounded-md hover:bg-gray-800/50 cursor-pointer transition-all duration-150 group"
-    style="padding-left: {level * 1.5 + 0.5}rem;"
+    class="flex items-center py-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer transition-all duration-150 group focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 focus-visible:outline-none dark:focus-visible:ring-offset-gray-900"
+    tabindex="0" style="padding-left: {level * 1.5 + 0.5}rem;"
     on:click={toggleNode}
     on:contextmenu={handleContextMenu}
   >
     <!-- 展开/收起箭头 -->
     {#if node.children && node.children.length > 0}
-      <span class="w-4 text-xs text-gray-500 mr-1 transition-transform duration-200 flex items-center justify-center" class:rotate-90={node.expanded}>
+      <span class="w-4 text-xs text-slate-500 dark:text-gray-500 mr-1 transition-transform duration-200 flex items-center justify-center" class:rotate-90={node.expanded}>
         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
         </svg>
@@ -181,7 +194,7 @@
     
     <!-- 节点名称 -->
     <span class="text-sm {getNodeStyle(node.type)} truncate flex-1">
-      {node.name}
+      {@html highlightName(node.name, searchQuery)}
     </span>
     
     <!-- 操作按钮（悬停显示） -->
@@ -199,7 +212,7 @@
   </div>
   
   {#if node.expanded && node.children}
-    <div class="children ml-1 border-l border-gray-800 pl-2">
+    <div class="children ml-1 border-l border-gray-200 dark:border-gray-800 pl-2">
       {#each node.children as childNode (childNode.id)}
         <svelte:self node={childNode} level={level + 1} on:toggle on:select on:openTable on:designTable />
       {/each}
@@ -210,26 +223,26 @@
 <!-- 右键菜单 -->
 {#if showContextMenu && (node.type === 'table' || node.type === 'collection')}
   <div 
-    class="fixed z-50 bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-1 min-w-[180px] backdrop-blur-sm"
+    class="fixed z-50 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl py-1 min-w-[180px] backdrop-blur-sm"
     style="left: {contextMenuX}px; top: {contextMenuY}px;"
   >
     <button
-      class="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors duration-150 flex items-center"
+      class="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-150 flex items-center"
       on:click={handleOpenTable}
     >
       <span class="mr-3">📖</span>
       {node.type === 'table' ? '打开表' : '打开集合'}
     </button>
     <button
-      class="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors duration-150 flex items-center"
+      class="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-150 flex items-center"
       on:click={handleDesignTable}
     >
       <span class="mr-3">✏️</span>
       {node.type === 'table' ? '设计表' : '设计集合'}
     </button>
-    <div class="border-t border-gray-800 my-1"></div>
+    <div class="border-t border-gray-200 dark:border-gray-800 my-1"></div>
     <button
-      class="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors duration-150 flex items-center"
+      class="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-150 flex items-center"
       on:click={() => { showContextMenu = false; }}
     >
       <span class="mr-3">🔄</span>

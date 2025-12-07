@@ -99,10 +99,44 @@ interface QueryHistoryState {
   maxHistory: number;
 }
 
-export const queryHistory = writable<QueryHistoryState>({
-  items: [],
-  maxHistory: 50
-});
+const QUERY_HISTORY_KEY = "smart-sql-query-history";
+
+/**
+ * 从 localStorage 加载查询历史
+ */
+function loadQueryHistoryFromStorage(): QueryHistoryState {
+  try {
+    const stored = localStorage.getItem(QUERY_HISTORY_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return {
+        items: parsed.items || [],
+        maxHistory: parsed.maxHistory || 50,
+      };
+    }
+  } catch (error) {
+    console.error("Failed to load query history from storage:", error);
+  }
+  return {
+    items: [],
+    maxHistory: 50,
+  };
+}
+
+/**
+ * 保存查询历史到 localStorage
+ */
+function saveQueryHistoryToStorage(state: QueryHistoryState): void {
+  try {
+    localStorage.setItem(QUERY_HISTORY_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.error("Failed to save query history to storage:", error);
+  }
+}
+
+export const queryHistory = writable<QueryHistoryState>(
+  loadQueryHistoryFromStorage()
+);
 
 export function addToQueryHistory(
   sql: string, 
@@ -125,18 +159,30 @@ export function addToQueryHistory(
       newItems = newItems.slice(0, state.maxHistory);
     }
     
-    return {
+    const newState = {
       ...state,
-      items: newItems
+      items: newItems,
     };
+
+    // 保存到 localStorage
+    saveQueryHistoryToStorage(newState);
+
+    return newState;
   });
 }
 
 export function clearQueryHistory() {
-  queryHistory.update(state => ({
-    ...state,
-    items: []
-  }));
+  queryHistory.update((state) => {
+    const newState = {
+      ...state,
+      items: [],
+    };
+
+    // 保存到 localStorage
+    saveQueryHistoryToStorage(newState);
+
+    return newState;
+  });
 }
 
 // --- App Settings ---
@@ -145,24 +191,153 @@ interface AppSettings {
   fontSize: number;
   autoSave: boolean;
   dbTreeAutoExpandDepth: number;
+  // AI 配置
+  aiBaseUrl: string;
+  aiApiKey: string;
+  aiModel: string;
 }
 
-export const appSettings = writable<AppSettings>({
-  theme: 'light',
-  fontSize: 14,
-  autoSave: true,
-  dbTreeAutoExpandDepth: 2
-});
-
-export function toggleTheme() {
-  appSettings.update(settings => {
-    const newTheme = settings.theme === 'light' ? 'dark' : 'light';
-    if (typeof document !== 'undefined') {
-    document.documentElement.classList.toggle('dark', newTheme === 'dark');
-    }
+// 从Lo calStorage加载设置
+function loadSettingsFromStorage(): AppSettings {
+  if (typeof window === "undefined") {
     return {
-      ...settings,
-      theme: newTheme
+      theme: "light",
+      fontSize: 14,
+      autoSave: true,
+      dbTreeAutoExpandDepth: 2,
+      aiBaseUrl: "https://api.openai.com/v1",
+      aiApiKey: "",
+      aiModel: "gpt-3.5-turbo",
     };
+  }
+
+  try {
+    const saved = localStorage.getItem("smart-sql:app-settings");
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        theme: (parsed.theme === "dark" ? "dark" : "light") as "light" | "dark",
+        fontSize: parsed.fontSize || 14,
+        autoSave: parsed.autoSave !== false,
+        dbTreeAutoExpandDepth: parsed.dbTreeAutoExpandDepth || 2,
+        aiBaseUrl: parsed.aiBaseUrl || "https://api.openai.com/v1",
+        aiApiKey: parsed.aiApiKey || "",
+        aiModel: parsed.aiModel || "gpt-3.5-turbo",
+      };
+    }
+  } catch (error) {
+    console.error("加载设置失败:", error);
+  }
+
+  // 检测系统主题偏好
+  const prefersDark =
+    window.matchMedia &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches;
+  return {
+    theme: (prefersDark ? "dark" : "light") as "light" | "dark",
+    fontSize: 14,
+    autoSave: true,
+    dbTreeAutoExpandDepth: 2,
+    aiBaseUrl: "https://api.openai.com/v1",
+    aiApiKey: "",
+    aiModel: "gpt-3.5-turbo",
+  };
+}
+
+// 创建设置store
+function createAppSettings() {
+  const { subscribe, update, set } = writable<AppSettings>(
+    loadSettingsFromStorage()
+  );
+
+  return {
+    subscribe,
+    set,
+    update,
+    // 保存设置到LocalStorage
+    save: () => {
+      if (typeof window !== "undefined") {
+        update((settings) => {
+          localStorage.setItem(
+            "smart-sql:app-settings",
+            JSON.stringify(settings)
+          );
+          return settings;
+        });
+      }
+    },
+  };
+}
+
+export const appSettings = createAppSettings();
+
+// 切换主题
+export function toggleTheme() {
+  appSettings.update((settings) => {
+    const newTheme: "light" | "dark" =
+      settings.theme === "light" ? "dark" : "light";
+    const newSettings: AppSettings = {
+      ...settings,
+      theme: newTheme,
+    };
+
+    // 应用到document
+    if (typeof document !== "undefined") {
+      document.documentElement.classList.toggle("dark", newTheme === "dark");
+    }
+
+    // 保存到LocalStorage
+    if (typeof window !== "undefined") {
+      localStorage.setItem(
+        "smart-sql:app-settings",
+        JSON.stringify(newSettings)
+      );
+    }
+
+    return newSettings;
   });
+}
+
+// 设置主题（不切换，直接设置）
+export function setTheme(theme: "light" | "dark") {
+  appSettings.update((settings) => {
+    const newSettings = {
+      ...settings,
+      theme,
+    };
+
+    // 应用到document
+    if (typeof document !== "undefined") {
+      document.documentElement.classList.toggle("dark", theme === "dark");
+    }
+
+    // 保存到LocalStorage
+    if (typeof window !== "undefined") {
+      localStorage.setItem(
+        "smart-sql:app-settings",
+        JSON.stringify(newSettings)
+      );
+    }
+
+    return newSettings;
+  });
+}
+
+// 监听系统主题变化
+export function setupSystemThemeListener() {
+  if (typeof window === 'undefined') return;
+
+  const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  
+  const handler = (e: MediaQueryListEvent) => {
+    // 只在用户未手动设置主题时跟随系统
+    const savedSettings = localStorage.getItem('smart-sql:app-settings');
+    if (!savedSettings) {
+      setTheme(e.matches ? 'dark' : 'light');
+    }
+  };
+
+  mediaQuery.addEventListener('change', handler);
+  
+  return () => mediaQuery.removeEventListener('change', handler);
 }
