@@ -44,7 +44,7 @@ impl LocalStorageManager {
     }
     
     /// 获取当前Unix时间戳（秒）
-    fn current_timestamp() -> i64 {
+    pub fn current_timestamp() -> i64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -357,6 +357,32 @@ impl LocalStorageManager {
         sqlx::query(
             "UPDATE sql_favorites SET usage_count = usage_count + 1, last_used_at = ? WHERE id = ?"
         )
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+    
+    /// 更新SQL收藏
+    #[allow(dead_code)]
+    pub async fn update_sql_favorite(
+        &self,
+        id: i64,
+        name: &Option<String>,
+        sql_text: &Option<String>,
+        description: &Option<String>,
+        category: &Option<String>,
+    ) -> Result<(), sqlx::Error> {
+        let now = Self::current_timestamp();
+        
+        sqlx::query(
+            "UPDATE sql_favorites SET name = COALESCE(?, name), sql_text = COALESCE(?, sql_text), description = COALESCE(?, description), category = COALESCE(?, category), updated_at = ? WHERE id = ?"
+        )
+        .bind(name.as_ref().map(|s| s.as_str()))
+        .bind(sql_text.as_ref().map(|s| s.as_str()))
+        .bind(description.as_ref().map(|s| s.as_str()))
+        .bind(category.as_ref().map(|s| s.as_str()))
         .bind(now)
         .bind(id)
         .execute(&self.pool)

@@ -31,6 +31,46 @@
   let saving = false;
   let errorMsg = '';
   
+  // 撤销/重做历史
+  type HistorySnapshot = { edits: Map<number, Record<string, any>>; data: Record<string, any>[] };
+  let history: HistorySnapshot[] = [];
+  let historyIndex = -1;
+  
+  function saveHistory() {
+    historyIndex++;
+    if (historyIndex < history.length) {
+      history = history.slice(0, historyIndex);
+    }
+    history.push({
+      edits: new Map(edits),
+      data: JSON.parse(JSON.stringify(data))
+    });
+  }
+  
+  function undo() {
+    if (historyIndex > 0) {
+      historyIndex--;
+      const snapshot = history[historyIndex];
+      edits = new Map(snapshot.edits);
+      data = JSON.parse(JSON.stringify(snapshot.data));
+      editing = null;
+    }
+  }
+  
+  function redo() {
+    if (historyIndex < history.length - 1) {
+      historyIndex++;
+      const snapshot = history[historyIndex];
+      edits = new Map(snapshot.edits);
+      data = JSON.parse(JSON.stringify(snapshot.data));
+      editing = null;
+    }
+  }
+  
+  // 行选择状态
+  let selectedRows: Set<number> = new Set();
+  let selectAll = false;
+  
   function isNumeric(value: unknown): boolean {
     if (value === null || value === undefined) return false;
     if (typeof value === 'number') return true;
@@ -53,6 +93,8 @@
     const rowEdits = edits.get(rowIndex) || {};
     rowEdits[col] = value === '' ? null : value;
     edits.set(rowIndex, rowEdits);
+    edits = edits; // Trigger reactivity
+    saveHistory();
     editing = null;
   }
   
@@ -113,6 +155,36 @@
     }
     dispatch('savedAll');
   }
+  
+  // 行选择管理
+  function toggleRowSelection(rowIndex: number) {
+    if (selectedRows.has(rowIndex)) {
+      selectedRows.delete(rowIndex);
+    } else {
+      selectedRows.add(rowIndex);
+    }
+    selectedRows = selectedRows;
+  }
+  
+  function toggleSelectAll() {
+    if (selectAll) {
+      selectedRows.clear();
+    } else {
+      for (let i = 0; i < data.length; i++) {
+        selectedRows.add(i);
+      }
+    }
+    selectAll = !selectAll;
+    selectedRows = selectedRows;
+  }
+  
+  // 获取行编辑状态
+  function getRowStatus(rowIndex: number): 'modified' | 'saved' | 'error' | 'normal' {
+    if (edits.has(rowIndex)) {
+      return 'modified';
+    }
+    return 'normal';
+  }
 </script>
 
 <div class="flex flex-col h-full">
@@ -121,8 +193,24 @@
     <div class="text-sm text-gray-600 dark:text-gray-400">
       表：<span class="font-medium text-gray-900 dark:text-gray-100">{tableName}</span>
       · 列：{columns.length} · 行：{data.length}
+      {#if edits.size > 0}
+        · <span class="text-orange-600 dark:text-orange-400">⚠️ 修改：{edits.size}行</span>
+      {/if}
     </div>
     <div class="flex items-center space-x-2">
+      <button 
+        on:click={undo} 
+        disabled={historyIndex <= 0} 
+        title="撤销 (Ctrl+Z)"
+        class="px-3 py-1.5 text-sm bg-gray-300 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded hover:bg-gray-400 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+      >↶ 撤销</button>
+      <button 
+        on:click={redo} 
+        disabled={historyIndex >= history.length - 1} 
+        title="重做 (Ctrl+Y)"
+        class="px-3 py-1.5 text-sm bg-gray-300 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded hover:bg-gray-400 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+      >↷ 重做</button>
+      <div class="w-px h-6 bg-gray-300 dark:bg-gray-600"></div>
       <button on:click={saveAll} disabled={saving || edits.size === 0} class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">💾 全部保存</button>
     </div>
   </div>
@@ -136,6 +224,15 @@
     <table class="w-full border-collapse">
       <thead class="bg-gray-100 dark:bg-gray-900 sticky top-0 z-10">
         <tr>
+          <th class="px-2 py-2 w-10 text-center">
+            <input 
+              type="checkbox" 
+              checked={selectAll}
+              on:change={toggleSelectAll}
+              class="w-4 h-4 cursor-pointer"
+            />
+          </th>
+          <th class="px-2 py-2 w-12 text-center text-xs font-semibold text-gray-700 dark:text-gray-300 border-r border-gray-200 dark:border-gray-700">#</th>
           {#each columns as col}
             <th class="px-4 py-2 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 whitespace-nowrap">{col}</th>
           {/each}
@@ -144,7 +241,27 @@
       </thead>
       <tbody>
         {#each data as row, rowIndex}
-          <tr class="odd:bg-gray-50 dark:odd:bg-gray-900/30 border-b border-gray-200 dark:border-gray-700">
+          {@const status = getRowStatus(rowIndex)}
+          {@const isSelected = selectedRows.has(rowIndex)}
+          <tr 
+            class="odd:bg-gray-50 dark:odd:bg-gray-900/30 border-b border-gray-200 dark:border-gray-700"
+            class:bg-blue-50={isSelected} 
+            class:bg-yellow-50={status === 'modified'}
+          >
+            <td class="px-2 py-2 text-center">
+              <input 
+                type="checkbox" 
+                checked={isSelected}
+                on:change={() => toggleRowSelection(rowIndex)}
+                class="w-4 h-4 cursor-pointer"
+              />
+            </td>
+            <td class="px-2 py-2 text-center text-xs text-gray-500 dark:text-gray-400 border-r border-gray-200 dark:border-gray-700">
+              {rowIndex + 1}
+              {#if status === 'modified'}
+                <span class="ml-1 text-orange-600 dark:text-orange-400" title="已修改">✏️</span>
+              {/if}
+            </td>
             {#each columns as col}
               <td class="px-4 py-2 text-sm text-gray-800 dark:text-white align-top">
                 {#if editing && editing.rowIndex === rowIndex && editing.col === col}
@@ -158,7 +275,7 @@
                   />
                 {:else}
                   <button
-                    class="w-full text-left truncate hover:bg-gray-100 dark:hover:bg-gray-800 px-2 py-1 rounded"
+                    class="w-full text-left truncate bg-transparent text-gray-800 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 px-2 py-1 rounded"
                     title={String(row[col])}
                     on:dblclick={() => startEdit(rowIndex, col)}
                   >
@@ -167,7 +284,7 @@
                 {/if}
               </td>
             {/each}
-            <td class="px-4 py-2 text-right">
+            <td class="px-4 py-2 text-right whitespace-nowrap">
               <button on:click={() => saveRow(rowIndex)} disabled={saving || !edits.get(rowIndex)} class="px-3 py-1.5 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50">保存</button>
               <button on:click={cancelEdit} class="ml-2 px-3 py-1.5 text-xs bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded hover:bg-gray-300 dark:hover:bg-gray-600">取消</button>
             </td>

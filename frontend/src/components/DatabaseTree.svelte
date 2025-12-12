@@ -11,6 +11,8 @@
   let activeConnectionIds: number[] = [];
   let connections: DatabaseConnection[] = [];
   let searchQuery = '';
+  let draggedNode: DbTreeNode | null = null;
+  let dropTarget: DbTreeNode | null = null;
 
   appStore.subscribe(async (state) => {
     const idsChanged = JSON.stringify(state.activeConnectionIds.sort()) !== JSON.stringify(activeConnectionIds.sort());
@@ -273,6 +275,50 @@
     console.log('设计表:', tableName);
     // TODO: 打开表结构设计器
   }
+
+  // 处理拖拽开始
+  function handleDragStart(event: CustomEvent<{ sourceNode: DbTreeNode }>) {
+    draggedNode = event.detail.sourceNode;
+  }
+
+  // 处理拖拽重新排序
+  function handleReorder(event: CustomEvent<{ sourceNode: any, targetNode: any }>) {
+    const { sourceNode, targetNode } = event.detail;
+    console.log(`重新排序: ${sourceNode.name} -> ${targetNode.name}`);
+    
+    // 找到包含这两个节点的父节点并交换它们的位置
+    const reorderNodes = (nodes: DbTreeNode[]): boolean => {
+      for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+        
+        // 检查这个节点的子节点中是否有源和目标
+        if (node.children && node.children.length > 0) {
+          const sourceIdx = node.children.findIndex(n => n.id === sourceNode.id);
+          const targetIdx = node.children.findIndex(n => n.id === targetNode.id);
+          
+          if (sourceIdx !== -1 && targetIdx !== -1) {
+            // 交换位置
+            const temp = node.children[sourceIdx];
+            node.children[sourceIdx] = node.children[targetIdx];
+            node.children[targetIdx] = temp;
+            
+            // 触发响应式更新
+            treeData = [...treeData];
+            draggedNode = null;
+            return true;
+          }
+          
+          // 递归查找
+          if (reorderNodes(node.children)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+    
+    reorderNodes(treeData);
+  }
 </script>
 
 <div class="database-tree h-full overflow-y-auto bg-white dark:bg-slate-900/80 border-r border-gray-200 dark:border-slate-800/70 text-slate-800 dark:text-slate-200 backdrop-blur-sm" aria-busy={isLoading} role="region" aria-label="数据库连接树">
@@ -318,7 +364,17 @@
   {:else if treeData.length > 0}
     <div class="py-2" role="tree" aria-label="连接列表">
       {#each filteredTreeData as rootNode (rootNode.id)}
-        <DatabaseTreeNode node={rootNode} searchQuery={searchQuery} on:toggle={handleToggle} on:openTable={handleOpenTable} on:designTable={handleDesignTable} />
+        <DatabaseTreeNode 
+          node={rootNode} 
+          {searchQuery}
+          {draggedNode}
+          {dropTarget}
+          on:toggle={handleToggle} 
+          on:openTable={handleOpenTable} 
+          on:designTable={handleDesignTable}
+          on:dragStart={handleDragStart}
+          on:reorder={handleReorder}
+        />
       {/each}
     </div>
   {:else}

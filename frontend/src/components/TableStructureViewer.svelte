@@ -2,17 +2,128 @@
   // @ts-ignore - TableIndex is used in type assertion
   import type { TableSchema, TableColumn, TableIndex } from '../types';
   import DataImportDialog from './DataImportDialog.svelte';
+  import { executeSqlQuery } from '../services/api';
   
   export let tableSchema: TableSchema | null = null;
   export let isLoading: boolean = false;
   
   let showImportDialog = false;
+  let editMode = false;
+  let editedColumns: (TableColumn & { isNew?: boolean })[] = [];
+  let saving = false;
+  let saveError = '';
+  let deletedColumns: string[] = [];
   
   // 标签页切换
   let activeTab: 'columns' | 'indexes' | 'foreign_keys' | 'ddl' = 'columns';
   
   $: hasIndexes = tableSchema?.indexes && tableSchema.indexes.length > 0;
   $: indexes = (tableSchema?.indexes || []) as TableIndex[];
+  
+  // 进入编辑模式
+  function enterEditMode() {
+    editMode = true;
+    editedColumns = JSON.parse(JSON.stringify(tableSchema?.columns || []));
+    deletedColumns = [];
+    saveError = '';
+  }
+  
+  // 退出编辑模式
+  function exitEditMode() {
+    editMode = false;
+    editedColumns = [];
+    deletedColumns = [];
+    saveError = '';
+  }
+  
+  // 添加新列
+  function addColumn() {
+    const newColumn: TableColumn & { isNew?: boolean } = {
+      name: 'new_column',
+      dataType: 'TEXT',
+      nullable: true,
+      isNullable: true,
+      isPrimaryKey: false,
+      default: null,
+      defaultValue: null,
+      isNew: true
+    };
+    editedColumns = [...editedColumns, newColumn];
+  }
+  
+  // 删除列
+  function deleteColumn(index: number) {
+    const col = editedColumns[index];
+    if (!col.isNew && col.name) {
+      deletedColumns = [...deletedColumns, col.name];
+    }
+    editedColumns = editedColumns.filter((_, i) => i !== index);
+  }
+  
+  // 更新列属性
+  function updateColumn(index: number, field: string, value: any) {
+    if (index < editedColumns.length) {
+      editedColumns[index] = {
+        ...editedColumns[index],
+        [field]: value
+      };
+    }
+  }
+  
+  // 生成ALTER TABLE语句
+  function generateAlterStatements(): string[] {
+    const statements: string[] = [];
+    const tableName = tableSchema?.name;
+    if (!tableName) return statements;
+    
+    // 删除列语句
+    for (const colName of deletedColumns) {
+      statements.push(`ALTER TABLE ${tableName} DROP COLUMN ${colName};`);
+    }
+    
+    // 添加新列语句
+    for (const col of editedColumns) {
+      if (col.isNew && col.name) {
+        const type = col.dataType || 'TEXT';
+        const nullable = (col.nullable || col.isNullable) ? '' : ' NOT NULL';
+        statements.push(`ALTER TABLE ${tableName} ADD COLUMN ${col.name} ${type}${nullable};`);
+      }
+    }
+    
+    // 修改列的名称（SQLite 不支持，但其他数据库支持）
+    // 此处只记录变更，实际执行时由后端处理
+    
+    return statements;
+  }
+  
+  // 保存表结构修改
+  async function saveStructure() {
+    if (!tableSchema || !editedColumns.length) return;
+    
+    try {
+      saving = true;
+      saveError = '';
+      
+      const statements = generateAlterStatements();
+      if (statements.length === 0) {
+        saveError = '没有进行任何修改';
+        return;
+      }
+      
+      // 执行每个ALTER语句
+      for (const sql of statements) {
+        await executeSqlQuery({ sql });
+      }
+      
+      // 刷新表结构（由父组件处理）
+      editMode = false;
+      // 可以发出事件通知父组件重新加载
+    } catch (e) {
+      saveError = e instanceof Error ? e.message : '保存失败';
+    } finally {
+      saving = false;
+    }
+  }
   
   // 获取字段类型徽章
   function getTypeIcon(dataType: string): string {
@@ -82,18 +193,40 @@
     
     {#if tableSchema}
       <div class="flex items-center gap-2">
-        <button
-          on:click={copyDDL}
-          class="px-3 py-1.5 text-sm bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
-        >
-          📋 复制DDL
-        </button>
-        <button
-          on:click={() => showImportDialog = true}
-          class="px-3 py-1.5 text-sm bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded hover:bg-green-100 dark:hover:bg-green-900/40 transition-colors"
-        >
-          📥 导入数据
-        </button>
+        {#if editMode}
+          <button
+            on:click={saveStructure}
+            disabled={saving}
+            class="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+          >
+            💾 保存修改
+          </button>
+          <button
+            on:click={exitEditMode}
+            class="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded hover:bg-gray-300 dark:hover:bg-gray-600"
+          >
+            取消
+          </button>
+        {:else}
+          <button
+            on:click={enterEditMode}
+            class="px-3 py-1.5 text-sm bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 rounded hover:bg-orange-100 dark:hover:bg-orange-900/40 transition-colors"
+          >
+            ✏️ 编辑结构
+          </button>
+          <button
+            on:click={copyDDL}
+            class="px-3 py-1.5 text-sm bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+          >
+            📋 复制DDL
+          </button>
+          <button
+            on:click={() => showImportDialog = true}
+            class="px-3 py-1.5 text-sm bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded hover:bg-green-100 dark:hover:bg-green-900/40 transition-colors"
+          >
+            📥 导入数据
+          </button>
+        {/if}
       </div>
     {/if}
   </div>
@@ -150,50 +283,141 @@
     <!-- 标签页内容 -->
     <div class="flex-1 overflow-y-auto p-4">
       {#if activeTab === 'columns'}
-        <!-- 字段列表 -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-            <thead class="bg-gray-50 dark:bg-gray-800">
-              <tr>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">字段名</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">类型</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">约束</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">默认值</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">备注</th>
-              </tr>
-            </thead>
-            <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
-              {#each tableSchema.columns as column}
-                <tr class="hover:bg-gray-50 dark:hover:bg-gray-800">
-                  <td class="px-4 py-3 whitespace-nowrap">
-                    <div class="flex items-center">
-                      <span class="mr-2">{getTypeIcon(column.dataType || column.type || '')}</span>
-                      <span class="text-sm font-medium text-gray-900 dark:text-gray-100">{column.name}</span>
-                    </div>
-                  </td>
-                  <td class="px-4 py-3 whitespace-nowrap">
-                    <span class="text-sm text-gray-700 dark:text-gray-300 font-mono">{column.dataType || column.type || 'TEXT'}</span>
-                  </td>
-                  <td class="px-4 py-3 whitespace-nowrap">
-                    <div class="flex flex-wrap gap-1">
-                      {#each getConstraintBadges(column) as badge}
-                        <span class="px-2 py-0.5 text-xs font-semibold rounded {badge === 'PK' ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}">
-                          {badge}
-                        </span>
-                      {/each}
-                    </div>
-                  </td>
-                  <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400 font-mono">
-                    {column.default || column.defaultValue || '-'}
-                  </td>
-                  <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
-                    {column.comment || column.description || '-'}
-                  </td>
+        <!-- 错误提示 -->
+        {#if saveError}
+          <div class="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-red-700 dark:text-red-300">
+            {saveError}
+          </div>
+        {/if}
+        
+        {#if editMode}
+          <!-- 编辑模式：可编辑表格 -->
+          <div class="space-y-4">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-medium text-gray-900 dark:text-gray-100">编辑表结构</h3>
+              <button
+                on:click={addColumn}
+                class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                + 添加列
+              </button>
+            </div>
+            
+            <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-x-auto">
+              <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                <thead class="bg-gray-50 dark:bg-gray-800">
+                  <tr>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">字段名</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">数据类型</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">可为空</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">默认值</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">操作</th>
+                  </tr>
+                </thead>
+                <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+                  {#each editedColumns as column, idx}
+                    <tr class:bg-yellow-50={column.isNew}>
+                      <td class="px-4 py-3">
+                        <input
+                          type="text"
+                          value={column.name}
+                          on:change={(e) => updateColumn(idx, 'name', e.currentTarget.value)}
+                          class="w-full px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm"
+                          placeholder="列名"
+                        />
+                      </td>
+                      <td class="px-4 py-3">
+                        <select
+                          value={column.dataType || 'TEXT'}
+                          on:change={(e) => updateColumn(idx, 'dataType', e.currentTarget.value)}
+                          class="w-full px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm"
+                        >
+                          <option value="TEXT">TEXT</option>
+                          <option value="INTEGER">INTEGER</option>
+                          <option value="REAL">REAL</option>
+                          <option value="BLOB">BLOB</option>
+                          <option value="VARCHAR">VARCHAR</option>
+                          <option value="DATE">DATE</option>
+                          <option value="DATETIME">DATETIME</option>
+                        </select>
+                      </td>
+                      <td class="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={column.nullable || column.isNullable}
+                          on:change={(e) => updateColumn(idx, 'nullable', e.currentTarget.checked)}
+                          class="w-4 h-4 rounded cursor-pointer"
+                        />
+                      </td>
+                      <td class="px-4 py-3">
+                        <input
+                          type="text"
+                          value={column.default || column.defaultValue || ''}
+                          on:change={(e) => updateColumn(idx, 'default', e.currentTarget.value || null)}
+                          class="w-full px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm"
+                          placeholder="默认值"
+                        />
+                      </td>
+                      <td class="px-4 py-3 whitespace-nowrap">
+                        <button
+                          on:click={() => deleteColumn(idx)}
+                          class="px-3 py-1 text-xs bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded hover:bg-red-200 dark:hover:bg-red-900/50"
+                        >
+                          删除
+                        </button>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        {:else}
+          <!-- 查看模式：只读表格 -->
+          <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead class="bg-gray-50 dark:bg-gray-800">
+                <tr>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">字段名</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">类型</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">约束</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">默认值</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">备注</th>
                 </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+                {#each tableSchema.columns as column}
+                  <tr class="hover:bg-gray-50 dark:hover:bg-gray-800">
+                    <td class="px-4 py-3 whitespace-nowrap">
+                      <div class="flex items-center">
+                        <span class="mr-2">{getTypeIcon(column.dataType || column.type || '')}</span>
+                        <span class="text-sm font-medium text-gray-900 dark:text-gray-100">{column.name}</span>
+                      </div>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                      <span class="text-sm text-gray-700 dark:text-gray-300 font-mono">{column.dataType || column.type || 'TEXT'}</span>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                      <div class="flex flex-wrap gap-1">
+                        {#each getConstraintBadges(column) as badge}
+                          <span class="px-2 py-0.5 text-xs font-semibold rounded {badge === 'PK' ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}">
+                            {badge}
+                          </span>
+                        {/each}
+                      </div>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400 font-mono">
+                      {column.default || column.defaultValue || '-'}
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+                      {column.comment || column.description || '-'}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
       {:else if activeTab === 'indexes'}
         <!-- 索引列表 -->
         {#if hasIndexes && indexes.length > 0}

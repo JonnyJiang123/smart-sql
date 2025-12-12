@@ -8,6 +8,8 @@
   import ShortcutsHelpDialog from './components/ShortcutsHelpDialog.svelte';
   import AiHistoryPanel from './components/AiHistoryPanel.svelte';
   import Tooltip from './components/Tooltip.svelte';
+  import TableCopilot from './components/TableCopilot.svelte';
+  import VisualTableBuilder from './components/VisualTableBuilder.svelte';
   import { shortcutManager, initGlobalShortcuts } from './lib/keyboardShortcuts';
 
   let title = '智能SQLer';
@@ -19,6 +21,7 @@
   let sidebarWidth = 240; // 侧边栏宽度
   let isResizing = false;
   let showShortcutsHelp = false;
+  let showVisualTableBuilder = false;
 
   // 订阅tabStore获取所有标签页
   $: tabs = $tabStore.tabs;
@@ -211,9 +214,15 @@
     // 初始化全局快捷键监听
     const cleanup = initGlobalShortcuts();
 
+    // 监听打开可视化建表事件
+    window.addEventListener('open-visual-table-builder', () => {
+      showVisualTableBuilder = true;
+    });
+
     // 组件销毁时清理
     return () => {
       cleanup();
+      window.removeEventListener('open-visual-table-builder', () => {});
     };
   });
 
@@ -333,3 +342,8 @@
 <!-- AI生成历史面板 -->
 <AiHistoryPanel bind:visible={showAiHistory} />
 
+<!-- AI建表助手 -->
+<TableCopilot />
+
+<!-- 可视化建表 -->
+<VisualTableBuilder bind:visible={showVisualTableBuilder} />

@@ -23,6 +23,7 @@ use std::collections::HashMap;
 
 use crate::services::ai::AiService;
 use crate::services::templates::{TemplateManager, PromptTemplate};
+use crate::api::bulk_operations::{bulk_insert_data, bulk_update_data, bulk_delete_data};
 
 // 类型别名，用于简化复杂类型
 type QueryCancellerMap = Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>>;
@@ -89,6 +90,12 @@ pub fn create_routes() -> Router {
                 .route("/query/explain", post(get_execution_plan))
                 // 取消查询
                 .route("/query/:query_id/cancel", post(cancel_query))
+                // 批量插入数据
+                .route("/data/bulk-insert", post(bulk_insert_data))
+                // 批量更新数据
+                .route("/data/bulk-update", post(bulk_update_data))
+                // 批量删除数据
+                .route("/data/bulk-delete", post(bulk_delete_data))
         )
         // AI功能API路由组
         .nest("/ai", 
@@ -99,6 +106,8 @@ pub fn create_routes() -> Router {
                 .route("/sql/optimize", post(optimize_sql))
                 // 解释SQL
                 .route("/sql/explain", post(explain_sql))
+                // AI生成建表SQL
+                .route("/table/create", post(create_table))
                 // AI配置管理
                 .route("/config", get(get_ai_config))
                 .route("/config", post(save_ai_config))
@@ -146,6 +155,24 @@ pub fn create_routes() -> Router {
                 .route("/:id/favorite", post(toggle_query_favorite))
                 // 清空历史
                 .route("/clear", delete(clear_query_history))
+        )
+        // SQL收藏夹API路由组
+        .nest("/favorites",
+            Router::new()
+                // 获取所有收藏
+                .route("/", get(list_sql_favorites))
+                // 创建收藏
+                .route("/", post(create_sql_favorite))
+                // 获取单个收藏
+                .route("/:id", get(get_sql_favorite))
+                // 更新收藏
+                .route("/:id", put(update_sql_favorite))
+                // 删除收藏
+                .route("/:id", delete(delete_sql_favorite))
+                // 获取收藏分组列表
+                .route("/categories", get(list_favorite_categories))
+                // 增加收藏使用次数
+                .route("/:id/use", post(increment_favorite_usage))
         )
 }
 
@@ -1300,6 +1327,151 @@ async fn optimize_sql(
             ))
         }
     }
+}
+
+// AI生成建表SQL处理函数
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct CreateTableRequest {
+    natural_language: String,
+    database_schema: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct CreateTableResponse {
+    sql: String,
+    table_name: String,
+    schema: serde_json::Value,
+}
+
+async fn create_table(
+    Extension(ai_service): Extension<Option<AiService>>,
+    Json(req): Json<CreateTableRequest>,
+) -> Result<Json<CreateTableResponse>, (StatusCode, Json<ModelErrorResponse>)> {
+    info!("[API] POST /api/ai/table/create - 请求: 描述长度={}", req.natural_language.len());
+    debug!("[API] POST /api/ai/table/create - 请求内容: {}", req.natural_language);
+    if let Ok(req_json) = serde_json::to_string(&req) {
+        log::info!("[API] POST /api/ai/table/create - 请求体: {}", req_json);
+    }
+
+    // 检查AI服务是否可用
+    let ai_service = ai_service.as_ref()
+        .ok_or_else(|| (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ModelErrorResponse {
+                error: "ai_service_unavailable".to_string(),
+                message: "AI服务不可用".to_string(),
+                details: None,
+            })
+        ))?;
+
+    info!("开始生成建表SQL");
+
+    // 调用AI服务生成建表SQL
+    match ai_service.generate_sql(&req.natural_language, req.database_schema.as_deref(), None).await {
+        Ok(sql) => {
+            info!("[API] POST /api/ai/table/create - 响应成功: SQL长度={}", sql.len());
+            debug!("[API] POST /api/ai/table/create - 生成的SQL: {}", sql);
+
+            // 从SQL提取表名和字段信息
+            let table_name = extract_table_name(&sql).unwrap_or_else(|| "new_table".to_string());
+            let columns = extract_columns_from_sql(&sql);
+
+            let schema = serde_json::json!({
+                "table_name": table_name.clone(),
+                "columns": columns
+            });
+
+            let response = CreateTableResponse {
+                sql: sql.clone(),
+                table_name: table_name.clone(),
+                schema,
+            };
+
+            if let Ok(resp_json) = serde_json::to_string(&response) {
+                log::info!("[API] POST /api/ai/table/create - 响应体: {}", resp_json);
+            }
+
+            Ok(Json(response))
+        },
+        Err(e) => {
+            error!("生成建表SQL失败: {:?}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ModelErrorResponse {
+                    error: "ai_error".to_string(),
+                    message: format!("生成建表SQL失败: {}", e),
+                    details: None,
+                })
+            ))
+        }
+    }
+}
+
+// 辅助函数：从SQL提取表名
+fn extract_table_name(sql: &str) -> Option<String> {
+    let sql_upper = sql.to_uppercase();
+    if let Some(create_idx) = sql_upper.find("CREATE TABLE") {
+        let after_create = &sql[create_idx + 12..];
+        let trimmed = after_create.trim_start();
+        
+        // 处理 IF NOT EXISTS
+        let trimmed = if trimmed.to_uppercase().starts_with("IF NOT EXISTS") {
+            let after_if = trimmed[13..].trim_start();
+            after_if
+        } else {
+            trimmed
+        };
+
+        // 获取表名（第一个非标识符字符之前）
+        let table_name = trimmed
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .next()
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty());
+
+        return table_name;
+    }
+    None
+}
+
+// 辅助函数：从SQL提取列定义
+fn extract_columns_from_sql(sql: &str) -> Vec<serde_json::Value> {
+    let mut columns = Vec::new();
+    
+    // 简单的列提取逻辑
+    if let Some(paren_start) = sql.find('(') {
+        if let Some(paren_end) = sql.rfind(')') {
+            let column_defs = &sql[paren_start + 1..paren_end];
+            
+            for line in column_defs.lines() {
+                let trimmed = line.trim().trim_end_matches(',');
+                if !trimmed.is_empty() && !trimmed.to_uppercase().starts_with("PRIMARY") 
+                    && !trimmed.to_uppercase().starts_with("FOREIGN")
+                    && !trimmed.to_uppercase().starts_with("UNIQUE")
+                    && !trimmed.to_uppercase().starts_with("INDEX") {
+                    
+                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        let name = parts[0].to_string();
+                        let col_type = parts[1].to_string();
+                        let not_null = trimmed.to_uppercase().contains("NOT NULL");
+                        let unique = trimmed.to_uppercase().contains("UNIQUE");
+                        let primary_key = trimmed.to_uppercase().contains("PRIMARY KEY");
+                        
+                        columns.push(serde_json::json!({
+                            "name": name,
+                            "type": col_type,
+                            "not_null": not_null,
+                            "unique": unique,
+                            "primary_key": primary_key
+                        }));
+                    }
+                }
+            }
+        }
+    }
+    
+    columns
 }
 
 // 执行SQL查询处理函数
@@ -3309,4 +3481,255 @@ async fn get_ai_config(
         "api_key": api_key,
         "model": model
     })))
+}
+
+// ============================================================================
+// SQL收藏夹API处理函数
+// ============================================================================
+
+#[derive(Serialize, Deserialize)]
+struct CreateSqlFavoriteRequest {
+    name: String,
+    sql_text: String,
+    description: Option<String>,
+    category: Option<String>,
+    connection_id: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct UpdateSqlFavoriteRequest {
+    name: Option<String>,
+    sql_text: Option<String>,
+    description: Option<String>,
+    category: Option<String>,
+}
+
+// 获取所有收藏
+async fn list_sql_favorites(
+    Extension(storage): Extension<LocalStorageManager>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ModelErrorResponse>)> {
+    log::info!("[API] GET /api/favorites - 获取SQL收藏列表请求");
+    
+    let category = params.get("category").map(|s| s.as_str());
+    
+    match storage.list_sql_favorites(category).await {
+        Ok(favorites) => {
+            log::debug!("[API] 获取SQL收藏 {} 条", favorites.len());
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": favorites,
+                "count": favorites.len()
+            })))
+        },
+        Err(e) => {
+            log::error!("[API] 获取SQL收藏失败: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ModelErrorResponse {
+                    error: "list_favorites_failed".to_string(),
+                    message: format!("获取收藏列表失败: {}", e),
+                    details: None,
+                })
+            ))
+        }
+    }
+}
+
+// 创建收藏
+async fn create_sql_favorite(
+    Extension(storage): Extension<LocalStorageManager>,
+    Json(req): Json<CreateSqlFavoriteRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ModelErrorResponse>)> {
+    log::info!("[API] POST /api/favorites - 创建SQL收藏请求");
+    
+    match storage.create_sql_favorite(&req.name, &req.sql_text, req.description.as_deref(), req.category.as_deref(), req.connection_id).await {
+        Ok(favorite) => {
+            log::info!("[API] SQL收藏创建成功: id={:?}", favorite.id);
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": favorite,
+                "message": "SQL收藏创建成功"
+            })))
+        },
+        Err(e) => {
+            log::error!("[API] 创建SQL收藏失败: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ModelErrorResponse {
+                    error: "create_favorite_failed".to_string(),
+                    message: format!("创建收藏失败: {}", e),
+                    details: None,
+                })
+            ))
+        }
+    }
+}
+
+// 获取单个收藏
+async fn get_sql_favorite(
+    Extension(storage): Extension<LocalStorageManager>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ModelErrorResponse>)> {
+    log::info!("[API] GET /api/favorites/:id - 获取SQL收藏请求: id={}", id);
+    
+    match storage.get_sql_favorite(id).await {
+        Ok(favorite) => {
+            log::info!("[API] 获取SQL收藏成功: id={}", id);
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": favorite
+            })))
+        },
+        Err(e) => {
+            log::error!("[API] 获取SQL收藏失败: {}", e);
+            Err((
+                StatusCode::NOT_FOUND,
+                Json(ModelErrorResponse {
+                    error: "favorite_not_found".to_string(),
+                    message: format!("收藏不存在: {}", e),
+                    details: None,
+                })
+            ))
+        }
+    }
+}
+
+// 更新收藏
+async fn update_sql_favorite(
+    Extension(storage): Extension<LocalStorageManager>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Json(req): Json<UpdateSqlFavoriteRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ModelErrorResponse>)> {
+    log::info!("[API] PUT /api/favorites/:id - 更新SQL收藏请求: id={}", id);
+    
+    match storage.update_sql_favorite(id, &req.name, &req.sql_text, &req.description, &req.category).await {
+        Ok(_) => {
+            match storage.get_sql_favorite(id).await {
+                Ok(favorite) => {
+                    log::info!("[API] SQL收藏更新成功: id={}", id);
+                    Ok(Json(serde_json::json!({
+                        "success": true,
+                        "data": favorite,
+                        "message": "收藏已更新"
+                    })))
+                },
+                Err(_) => {
+                    Ok(Json(serde_json::json!({
+                        "success": true,
+                        "message": "收藏已更新"
+                    })))
+                }
+            }
+        },
+        Err(e) => {
+            log::error!("[API] 更新SQL收藏失败: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ModelErrorResponse {
+                    error: "update_favorite_failed".to_string(),
+                    message: format!("更新收藏失败: {}", e),
+                    details: None,
+                })
+            ))
+        }
+    }
+}
+
+// 删除收藏
+async fn delete_sql_favorite(
+    Extension(storage): Extension<LocalStorageManager>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ModelErrorResponse>)> {
+    log::info!("[API] DELETE /api/favorites/:id - 删除SQL收藏请求: id={}", id);
+    
+    match storage.delete_sql_favorite(id).await {
+        Ok(_) => {
+            log::info!("[API] SQL收藏删除成功: id={}", id);
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "message": "收藏已删除"
+            })))
+        },
+        Err(e) => {
+            log::error!("[API] 删除SQL收藏失败: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ModelErrorResponse {
+                    error: "delete_favorite_failed".to_string(),
+                    message: format!("删除收藏失败: {}", e),
+                    details: None,
+                })
+            ))
+        }
+    }
+}
+
+// 获取收藏分组列表
+async fn list_favorite_categories(
+    Extension(storage): Extension<LocalStorageManager>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ModelErrorResponse>)> {
+    log::info!("[API] GET /api/favorites/categories - 获取收藏分组列表请求");
+    
+    match storage.list_favorite_categories().await {
+        Ok(categories) => {
+            log::info!("[API] 获取收藏分组 {} 个", categories.len());
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": categories,
+                "count": categories.len()
+            })))
+        },
+        Err(e) => {
+            log::error!("[API] 获取收藏分组失败: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ModelErrorResponse {
+                    error: "list_categories_failed".to_string(),
+                    message: format!("获取分组列表失败: {}", e),
+                    details: None,
+                })
+            ))
+        }
+    }
+}
+
+// 增加收藏使用次数
+async fn increment_favorite_usage(
+    Extension(storage): Extension<LocalStorageManager>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ModelErrorResponse>)> {
+    log::info!("[API] POST /api/favorites/:id/use - 增加收藏使用次数请求: id={}", id);
+    
+    match storage.increment_favorite_usage(id).await {
+        Ok(_) => {
+            match storage.get_sql_favorite(id).await {
+                Ok(favorite) => {
+                    log::info!("[API] 收藏使用次数已更新: id={}", id);
+                    Ok(Json(serde_json::json!({
+                        "success": true,
+                        "data": favorite,
+                        "message": "使用次数已更新"
+                    })))
+                },
+                Err(_) => {
+                    Ok(Json(serde_json::json!({
+                        "success": true,
+                        "message": "使用次数已更新"
+                    })))
+                }
+            }
+        },
+        Err(e) => {
+            log::error!("[API] 增加收藏使用次数失败: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ModelErrorResponse {
+                    error: "increment_usage_failed".to_string(),
+                    message: format!("更新使用次数失败: {}", e),
+                    details: None,
+                })
+            ))
+        }
+    }
 }

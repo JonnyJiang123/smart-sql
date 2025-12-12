@@ -254,3 +254,91 @@ export async function saveAiConfig(config: AiConfig): Promise<{ success: boolean
     body: JSON.stringify(config),
   });
 }
+
+// ==================== SQL收藏夹 API ====================
+
+// SQL收藏夹接口
+export interface SqlFavorite {
+  id?: number;
+  name: string;
+  sql_text: string;
+  description?: string;
+  category?: string;
+  connection_id?: number;
+  created_at: number;
+  updated_at: number;
+  usage_count: number;
+  last_used_at?: number;
+}
+
+export interface CreateSqlFavoriteRequest {
+  name: string;
+  sql_text: string;
+  description?: string;
+  category?: string;
+  connection_id?: number;
+}
+
+export interface UpdateSqlFavoriteRequest {
+  name?: string;
+  sql_text?: string;
+  description?: string;
+  category?: string;
+}
+
+// 获取所有SQL收藏（支持按分组过滤）
+export async function listSqlFavorites(category?: string): Promise<{ success: boolean; data: SqlFavorite[]; count: number }> {
+  const url = category ? `/favorites?category=${encodeURIComponent(category)}` : '/favorites';
+  return fetchApi<{ success: boolean; data: SqlFavorite[]; count: number }>(url);
+}
+
+// 创建新的SQL收藏
+export async function createSqlFavorite(request: CreateSqlFavoriteRequest): Promise<{ success: boolean; data: SqlFavorite; message: string }> {
+  return fetchApi<{ success: boolean; data: SqlFavorite; message: string }>('/favorites', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+// 获取单个SQL收藏
+export async function getSqlFavorite(id: number): Promise<{ success: boolean; data: SqlFavorite }> {
+  return fetchApi<{ success: boolean; data: SqlFavorite }>(`/favorites/${id}`);
+}
+
+// 更新SQL收藏
+export async function updateSqlFavorite(id: number, request: UpdateSqlFavoriteRequest): Promise<{ success: boolean; data: SqlFavorite; message: string }> {
+  return fetchApi<{ success: boolean; data: SqlFavorite; message: string }>(`/favorites/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(request),
+  });
+}
+
+// 删除SQL收藏
+export async function deleteSqlFavorite(id: number): Promise<{ success: boolean; message: string }> {
+  return fetchApi<{ success: boolean; message: string }>(`/favorites/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+// 获取收藏分组列表
+export async function listFavoriteCategories(): Promise<{ success: boolean; data: string[]; count: number }> {
+  return fetchApi<{ success: boolean; data: string[]; count: number }>('/favorites/categories');
+}
+
+// 增加SQL收藏使用次数
+export async function incrementFavoriteUsage(id: number): Promise<{ success: boolean; data?: SqlFavorite; message: string }> {
+  return fetchApi<{ success: boolean; data?: SqlFavorite; message: string }>(`/favorites/${id}/use`, {
+    method: 'POST',
+  });
+}
+
+// AI生成建表SQL
+export async function createTable(request: {
+  natural_language: string;
+  database_schema?: string;
+}): Promise<{ sql: string; table_name: string; schema: any }> {
+  return fetchApi<{ sql: string; table_name: string; schema: any }>('/ai/table/create', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}

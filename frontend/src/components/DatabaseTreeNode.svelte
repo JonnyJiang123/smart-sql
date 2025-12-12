@@ -5,12 +5,15 @@
   export let node: DbTreeNode;
   export let level = 0;
   export let searchQuery = '';
+  export let draggedNode: DbTreeNode | null = null;
+  export let dropTarget: DbTreeNode | null = null;
   
   const dispatch = createEventDispatcher();
 
   let showContextMenu = false;
   let contextMenuX = 0;
   let contextMenuY = 0;
+  let isDragOver = false;
 
   function toggleNode() {
     // 有子节点的节点才能展开/收起
@@ -20,7 +23,7 @@
   }
 
   function handleContextMenu(event: MouseEvent) {
-    if (node.type === 'table' || node.type === 'collection') {
+    if (node.type === 'table' || node.type === 'collection' || node.type === 'database') {
       event.preventDefault();
       contextMenuX = event.clientX;
       contextMenuY = event.clientY;
@@ -40,6 +43,85 @@
   function handleDesignTable() {
     showContextMenu = false;
     dispatch('designTable', { tableName: node.name });
+  }
+
+  function handleCreateTable() {
+    showContextMenu = false;
+    window.dispatchEvent(new CustomEvent('open-table-copilot', {
+      detail: { databaseName: node.name }
+    }));
+  }
+
+  // 拖拽功能处理
+  function handleDragStart(event: DragEvent) {
+    // 只允许拖拽同级节点（表、集合）
+    if (node.type !== 'table' && node.type !== 'collection') {
+      event.preventDefault();
+      return;
+    }
+    
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('application/json', JSON.stringify({
+        id: node.id,
+        name: node.name,
+        type: node.type,
+        level: level
+      }));
+    }
+    dispatch('dragStart', { sourceNode: node });
+  }
+
+  function handleDragOver(event: DragEvent) {
+    // 只允许同级节点之间的拖拽
+    if (node.type !== 'table' && node.type !== 'collection') {
+      event.preventDefault();
+      isDragOver = false;
+      return;
+    }
+    
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+    isDragOver = true;
+  }
+
+  function handleDragLeave(event: DragEvent) {
+    // 只在完全离开该节点时才取消悬停效果
+    if (event.target === event.currentTarget) {
+      isDragOver = false;
+    }
+  }
+
+  function handleDrop(event: DragEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    isDragOver = false;
+    
+    // 只允许同级节点之间的拖拽
+    if (node.type !== 'table' && node.type !== 'collection') {
+      return;
+    }
+    
+    if (event.dataTransfer) {
+      try {
+        const sourceData = JSON.parse(event.dataTransfer.getData('application/json'));
+        // 不允许拖拽到自己
+        if (sourceData.id !== node.id) {
+          dispatch('reorder', { 
+            sourceNode: sourceData,
+            targetNode: { id: node.id, name: node.name, type: node.type, level: level }
+          });
+        }
+      } catch (e) {
+        console.error('拖拽数据解析失败:', e);
+      }
+    }
+  }
+
+  function handleDragEnd() {
+    isDragOver = false;
   }
 
   // 为不同类型的节点选择图标
@@ -174,9 +256,20 @@
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div 
     class="flex items-center py-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer transition-all duration-150 group focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 focus-visible:outline-none dark:focus-visible:ring-offset-gray-900"
-    tabindex="0" style="padding-left: {level * 1.5 + 0.5}rem;"
+    class:bg-blue-50={isDragOver}
+    class:border-l-2={isDragOver}
+    class:border-blue-500={isDragOver}
+    class:opacity-50={draggedNode?.id === node.id}
+    tabindex="0" 
+    style="padding-left: {level * 1.5 + 0.5}rem;"
     on:click={toggleNode}
     on:contextmenu={handleContextMenu}
+    draggable={(node.type === 'table' || node.type === 'collection') ? true : false}
+    on:dragstart={handleDragStart}
+    on:dragover={handleDragOver}
+    on:dragleave={handleDragLeave}
+    on:drop={handleDrop}
+    on:dragend={handleDragEnd}
   >
     <!-- 展开/收起箭头 -->
     {#if node.children && node.children.length > 0}
@@ -214,33 +307,59 @@
   {#if node.expanded && node.children}
     <div class="children ml-1 border-l border-gray-200 dark:border-gray-800 pl-2">
       {#each node.children as childNode (childNode.id)}
-        <svelte:self node={childNode} level={level + 1} on:toggle on:select on:openTable on:designTable />
+        <svelte:self node={childNode} level={level + 1} {searchQuery} {draggedNode} {dropTarget} on:toggle on:select on:openTable on:designTable on:reorder on:dragStart />
       {/each}
     </div>
   {/if}
 </div>
 
 <!-- 右键菜单 -->
-{#if showContextMenu && (node.type === 'table' || node.type === 'collection')}
+{#if showContextMenu && (node.type === 'table' || node.type === 'collection' || node.type === 'database')}
   <div 
     class="fixed z-50 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl py-1 min-w-[180px] backdrop-blur-sm"
     style="left: {contextMenuX}px; top: {contextMenuY}px;"
   >
-    <button
-      class="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-150 flex items-center"
-      on:click={handleOpenTable}
-    >
-      <span class="mr-3">📖</span>
-      {node.type === 'table' ? '打开表' : '打开集合'}
-    </button>
-    <button
-      class="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-150 flex items-center"
-      on:click={handleDesignTable}
-    >
-      <span class="mr-3">✏️</span>
-      {node.type === 'table' ? '设计表' : '设计集合'}
-    </button>
-    <div class="border-t border-gray-200 dark:border-gray-800 my-1"></div>
+    {#if node.type === 'database'}
+      <!-- 数据库级别菜单 -->
+      <button
+        class="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-150 flex items-center"
+        on:click={handleCreateTable}
+      >
+        <span class="mr-3">🤖</span>
+        AI 建表
+      </button>
+      <button
+        class="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-150 flex items-center"
+        on:click={() => {
+          showContextMenu = false;
+          window.dispatchEvent(new CustomEvent('open-visual-table-builder'));
+        }}
+      >
+        <span class="mr-3">📊</span>
+        可视化建表
+      </button>
+      <div class="border-t border-gray-200 dark:border-gray-800 my-1"></div>
+    {/if}
+    
+    {#if node.type === 'table' || node.type === 'collection'}
+      <!-- 表级别菜单 -->
+      <button
+        class="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-150 flex items-center"
+        on:click={handleOpenTable}
+      >
+        <span class="mr-3">📖</span>
+        {node.type === 'table' ? '打开表' : '打开集合'}
+      </button>
+      <button
+        class="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-150 flex items-center"
+        on:click={handleDesignTable}
+      >
+        <span class="mr-3">✏️</span>
+        {node.type === 'table' ? '设计表' : '设计集合'}
+      </button>
+      <div class="border-t border-gray-200 dark:border-gray-800 my-1"></div>
+    {/if}
+    
     <button
       class="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-150 flex items-center"
       on:click={() => { showContextMenu = false; }}
