@@ -1,5 +1,7 @@
 <script lang="ts">
   import { appSettings, setTheme } from '../stores/appStore';
+  import { getAiConfig, saveAiConfig } from '../services/api';
+  import { onMount } from 'svelte';
   
   export let show = false;
   
@@ -10,15 +12,38 @@
   let aiBaseUrl = 'https://api.openai.com/v1';
   let aiApiKey = '';
   let aiModel = 'gpt-3.5-turbo';
+  let loadingAiConfig = false;
+  let savingAiConfig = false;
   
   // 订阅appSettings更新本地状态
   $: {
     fontSize = $appSettings.fontSize;
     autoSave = $appSettings.autoSave;
     dbTreeAutoExpandDepth = $appSettings.dbTreeAutoExpandDepth;
-    aiBaseUrl = $appSettings.aiBaseUrl;
-    aiApiKey = $appSettings.aiApiKey;
-    aiModel = $appSettings.aiModel;
+  }
+  
+  // 组件加载时从后端获取AI配置
+  onMount(async () => {
+    await loadAiConfigFromBackend();
+  });
+  
+  // 从后端加载AI配置
+  async function loadAiConfigFromBackend() {
+    loadingAiConfig = true;
+    try {
+      const config = await getAiConfig();
+      aiBaseUrl = config.base_url;
+      aiApiKey = config.api_key;
+      aiModel = config.model;
+    } catch (error) {
+      console.error('加载AI配置失败:', error);
+      // 使用默认值
+      aiBaseUrl = 'https://api.openai.com/v1';
+      aiApiKey = '';
+      aiModel = 'gpt-4o-mini';
+    } finally {
+      loadingAiConfig = false;
+    }
   }
   
   // 关闭设置面板
@@ -27,44 +52,53 @@
   }
   
   // 保存设置
-  function save() {
-    appSettings.update(settings => ({
-      ...settings,
-      fontSize,
-      autoSave,
-      dbTreeAutoExpandDepth,
-      aiBaseUrl,
-      aiApiKey,
-      aiModel
-    }));
-    
-    // 保存到LocalStorage
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('smart-sql:app-settings', JSON.stringify({
-        theme: $appSettings.theme,
+  async function save() {
+    savingAiConfig = true;
+    try {
+      // 保存非-AI配置到LocalStorage
+      appSettings.update(settings => ({
+        ...settings,
         fontSize,
         autoSave,
-        dbTreeAutoExpandDepth,
-        aiBaseUrl,
-        aiApiKey,
-        aiModel
+        dbTreeAutoExpandDepth
       }));
+      
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('smart-sql:app-settings', JSON.stringify({
+          theme: $appSettings.theme,
+          fontSize,
+          autoSave,
+          dbTreeAutoExpandDepth,
+        }));
+      }
+      
+      // 保存AI配置到后端SQLite
+      await saveAiConfig({
+        base_url: aiBaseUrl,
+        api_key: aiApiKey,
+        model: aiModel
+      });
+      
+      close();
+    } catch (error) {
+      console.error('保存设置失败:', error);
+      alert('保存AI配置失败，请重试');
+    } finally {
+      savingAiConfig = false;
     }
-    
-    close();
   }
   
   // 重置为默认设置
-  function resetToDefaults() {
+  async function resetToDefaults() {
     if (confirm('确定要重置所有设置为默认值吗？')) {
       fontSize = 14;
       autoSave = true;
       dbTreeAutoExpandDepth = 2;
       aiBaseUrl = 'https://api.openai.com/v1';
       aiApiKey = '';
-      aiModel = 'gpt-3.5-turbo';
+      aiModel = 'gpt-4o-mini';
       setTheme('light');
-      save();
+      await save();
     }
   }
 </script>
@@ -196,53 +230,56 @@
       <!-- AI 配置 -->
       <section>
         <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">🤖 AI 配置</h3>
-        <div class="space-y-4">
-          <div>
-            <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
-              API Base URL
-            </label>
-            <input
-              type="text"
-              bind:value={aiBaseUrl}
-              placeholder="https://api.openai.com/v1"
-              class="w-full px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+        {#if loadingAiConfig}
+          <div class="flex items-center justify-center p-4">
+            <div class="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+            <span class="ml-2 text-sm text-gray-600 dark:text-gray-400">加载中...</span>
           </div>
-          
-          <div>
-            <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
-              API Key
-            </label>
-            <input
-              type="password"
-              bind:value={aiApiKey}
-              placeholder="sk-..."
-              class="w-full px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-            />
+        {:else}
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
+                API Base URL
+              </label>
+              <input
+                type="text"
+                bind:value={aiBaseUrl}
+                placeholder="https://api.openai.com/v1"
+                class="w-full px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            
+            <div>
+              <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
+                API Key
+              </label>
+              <input
+                type="password"
+                bind:value={aiApiKey}
+                placeholder="sk-..."
+                class="w-full px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+              />
+            </div>
+            
+            <div>
+              <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
+                模型 (Model)
+              </label>
+              <input
+                type="text"
+                bind:value={aiModel}
+                placeholder="gpt-4o-mini"
+                class="w-full px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+              />
+            </div>
+            
+            <div class="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
+              <p class="text-xs text-gray-600 dark:text-gray-400">
+                ⚠️ API Key 将加密存储在本地，请妃善保管
+              </p>
+            </div>
           </div>
-          
-          <div>
-            <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
-              模型 (Model)
-            </label>
-            <select
-              bind:value={aiModel}
-              class="w-full px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
-              <option value="gpt-4">gpt-4</option>
-              <option value="gpt-4-turbo-preview">gpt-4-turbo-preview</option>
-              <option value="gpt-4o">gpt-4o</option>
-              <option value="gpt-4o-mini">gpt-4o-mini</option>
-            </select>
-          </div>
-          
-          <div class="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
-            <p class="text-xs text-gray-600 dark:text-gray-400">
-              ⚠️ API Key 将加密存储在本地，请妃善保管
-            </p>
-          </div>
-        </div>
+        {/if}
       </section>
 
       <!-- 关于 -->
@@ -283,9 +320,10 @@
         </button>
         <button
           on:click={save}
-          class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+          disabled={savingAiConfig}
+          class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg transition-colors"
         >
-          ✓ 保存
+          {savingAiConfig ? '保存中...' : '✓ 保存'}
         </button>
       </div>
     </div>

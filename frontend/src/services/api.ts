@@ -232,3 +232,25 @@ export async function testConnection(
     body: JSON.stringify(request),
   });
 }
+
+// ==================== AI配置管理 API ====================
+
+// AI配置接口
+export interface AiConfig {
+  base_url: string;
+  api_key: string;
+  model: string;
+}
+
+// 获取AI配置
+export async function getAiConfig(): Promise<AiConfig> {
+  return fetchApi<AiConfig>('/ai/config');
+}
+
+// 保存AI配置
+export async function saveAiConfig(config: AiConfig): Promise<{ success: boolean; message: string }> {
+  return fetchApi<{ success: boolean; message: string }>('/ai/config', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  });
+}

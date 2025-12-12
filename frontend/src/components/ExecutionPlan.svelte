@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import type { ExecutionPlan, ExecutionPlanNode } from '../types';
   import { getExecutionPlan } from '../services/api';
+  import { marked } from 'marked';
 
   export let sql: string = '';
   export let connectionId: number | undefined = undefined;
@@ -370,9 +371,9 @@
             <span class="mr-2">💡</span>
             AI优化建议
           </h4>
-          <p class="text-sm text-yellow-800 dark:text-yellow-300 whitespace-pre-wrap">
-            {plan.ai_optimization_advice}
-          </p>
+          <div class="text-sm text-yellow-800 dark:text-yellow-300 prose prose-sm dark:prose-invert max-w-none ai-suggestion-prose">
+            {@html marked(plan.ai_optimization_advice)}
+          </div>
           
           {#if plan.ai_optimized_sql}
             <div class="mt-3 p-3 bg-white dark:bg-gray-800 rounded border border-yellow-200 dark:border-yellow-700">
@@ -410,5 +411,123 @@
 <style>
   .rotate-90 {
     transform: rotate(90deg);
+  }
+  
+  /* Markdown渲染样式增强 */
+  /* 表格样式 */
+  :global(.ai-suggestion-prose table) {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+    font-size: 0.875rem;
+  }
+  
+  :global(.ai-suggestion-prose th) {
+    background-color: rgb(254 240 138); /* yellow-200 */
+    font-weight: 600;
+    padding: 0.5rem;
+    border: 1px solid rgb(161 98 7); /* yellow-800 */
+    text-align: left;
+  }
+  
+  :global(.ai-suggestion-prose td) {
+    padding: 0.5rem;
+    border: 1px solid rgb(161 98 7); /* yellow-800 */
+  }
+  
+  :global(.ai-suggestion-prose tr:nth-child(even)) {
+    background-color: rgb(254 249 195); /* yellow-100 */
+  }
+  
+  /* 代码块样式 */
+  /* 内联代码 - 只改变文字颜色，不添加背景 */
+  :global(.ai-suggestion-prose code) {
+    background-color: transparent;
+    color: rgb(217 119 6); /* amber-600 */
+    padding: 0;
+    border-radius: 0;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.875em;
+    font-weight: 400;
+    border: none;
+  }
+  
+  /* 代码块 - 深色背景，白色文字 */
+  :global(.ai-suggestion-prose pre) {
+    background-color: rgb(31 41 55); /* gray-800 */
+    padding: 1rem;
+    border-radius: 0.5rem;
+    overflow-x: auto;
+    margin: 1em 0;
+    border: 1px solid rgb(55 65 81); /* gray-700 */
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+  }
+  
+  :global(.ai-suggestion-prose pre code) {
+    background-color: transparent;
+    padding: 0;
+    border: none;
+    color: rgb(229 231 235); /* gray-200 */
+    font-weight: 400;
+  }
+  
+  /* 标题样式 */
+  :global(.ai-suggestion-prose h1),
+  :global(.ai-suggestion-prose h2),
+  :global(.ai-suggestion-prose h3),
+  :global(.ai-suggestion-prose h4) {
+    color: rgb(161 98 7); /* yellow-800 */
+    font-weight: 600;
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+  }
+  
+  /* 列表样式 */
+  :global(.ai-suggestion-prose ul),
+  :global(.ai-suggestion-prose ol) {
+    padding-left: 1.5em;
+    margin: 0.5em 0;
+  }
+  
+  :global(.ai-suggestion-prose li) {
+    margin: 0.25em 0;
+  }
+  
+  /* 暗黑模式样式 */
+  :global(.dark .ai-suggestion-prose th) {
+    background-color: rgb(113 63 18); /* yellow-800 dark */
+    border-color: rgb(234 179 8); /* yellow-500 */
+    color: rgb(254 249 195); /* yellow-100 */
+  }
+  
+  :global(.dark .ai-suggestion-prose td) {
+    border-color: rgb(234 179 8); /* yellow-500 */
+  }
+  
+  :global(.dark .ai-suggestion-prose tr:nth-child(even)) {
+    background-color: rgb(133 77 14 / 0.3); /* yellow-800 with opacity */
+  }
+  
+  /* 暗黑模式下的代码样式 */
+  :global(.dark .ai-suggestion-prose code) {
+    background-color: transparent;
+    color: rgb(251 191 36); /* amber-400 */
+    border: none;
+  }
+  
+  :global(.dark .ai-suggestion-prose pre) {
+    background-color: rgb(17 24 39); /* gray-900 */
+    border-color: rgb(31 41 55); /* gray-800 */
+  }
+  
+  :global(.dark .ai-suggestion-prose pre code) {
+    color: rgb(229 231 235); /* gray-200 */
+  }
+  
+  :global(.dark .ai-suggestion-prose h1),
+  :global(.dark .ai-suggestion-prose h2),
+  :global(.dark .ai-suggestion-prose h3),
+  :global(.dark .ai-suggestion-prose h4) {
+    color: rgb(253 224 71); /* yellow-300 */
   }
 </style>
