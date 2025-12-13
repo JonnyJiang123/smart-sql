@@ -34,8 +34,7 @@ async fn test_routes_creation() {
     let _routes = create_routes();
     println!("路由创建测试: 成功创建路由");
     
-    // 验证路由对象可以创建
-    assert!(true, "路由创建成功");
+    // 验证路由对象可以创建（如果创建失败会panic）
 }
 
 #[tokio::test]

@@ -1,11 +1,30 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { executeSqlQuery } from '../services/api';
+  import { appStore } from '../stores/appStore';
+  
+  // Autofocus action
+  function autofocus(node: HTMLInputElement) {
+    node.focus();
+    return {};
+  }
   
   export let columns: string[] = [];
   export let rows: any[] = []; // 每行是对象或数组，统一转对象
   export let tableName: string = '';
   export let primaryKeys: string[] = []; // 可选：用于WHERE
+  export let connectionId: number | null = null; // 当前连接ID
+  
+  // 获取当前数据库类型（使用响应式方式）
+  $: currentDatabaseType = (() => {
+    const state = $appStore;
+    const connection = connectionId 
+      ? state.connections.find(c => c.id === connectionId)
+      : state.connections.find(c => c.id === state.selectedConnectionId);
+    const dbType = connection?.db_type || 'mysql';
+    console.log('[EditableTable] 当前数据库类型:', dbType, 'connectionId:', connectionId, 'selectedConnectionId:', state.selectedConnectionId);
+    return dbType;
+  })();
   
   const dispatch = createEventDispatcher();
   
@@ -109,7 +128,7 @@
     errorMsg = '';
   }
   
-  // 构建WHERE子句
+  // 构建WHERE子句（SQL格式）
   function buildWhereClause(row: Record<string, any>): string {
     const keys = primaryKeys.length > 0 ? primaryKeys : columns; // 无主键时回退到全列匹配
     const parts = keys.map((col) => {
@@ -119,6 +138,62 @@
       return `${col} = '${escaped}'`;
     });
     return parts.join(' AND ');
+  }
+  
+  // 构建MongoDB查询条件（BSON格式）
+  function buildMongoQuery(row: Record<string, any>): string {
+    // MongoDB优先使用_id作为主键
+    const keys = primaryKeys.length > 0 ? primaryKeys : (columns.includes('_id') ? ['_id'] : columns.slice(0, 1));
+    const conditions: Record<string, any> = {};
+    
+    for (const col of keys) {
+      const val = row[col];
+      if (val !== null && val !== undefined) {
+        // 处理_id字段（可能是ObjectId对象）
+        if (col === '_id') {
+          // 如果_id是对象，尝试提取其值
+          if (typeof val === 'object' && val !== null) {
+            // 尝试从对象中提取$oid
+            if ('$oid' in val && typeof val.$oid === 'string') {
+              conditions[col] = { $oid: val.$oid };
+            } else if (typeof val === 'string') {
+              // 如果是字符串，直接使用（MongoDB会自动转换）
+              conditions[col] = val;
+            } else {
+              // 尝试使用toString()方法
+              try {
+                conditions[col] = String(val);
+              } catch {
+                conditions[col] = val;
+              }
+            }
+          } else if (typeof val === 'string') {
+            // 字符串类型的_id
+            conditions[col] = val;
+          } else {
+            conditions[col] = val;
+          }
+        } else {
+          conditions[col] = val;
+        }
+      }
+    }
+    
+    // 如果没有找到任何条件，使用空对象（会匹配所有文档，但updateOne只会更新第一个）
+    if (Object.keys(conditions).length === 0) {
+      return '{}';
+    }
+    
+    return JSON.stringify(conditions);
+  }
+  
+  // 构建MongoDB更新操作（$set格式）
+  function buildMongoUpdate(rowEdits: Record<string, any>): string {
+    const update: Record<string, any> = {};
+    for (const [col, val] of Object.entries(rowEdits)) {
+      update[col] = val === null ? null : val;
+    }
+    return JSON.stringify({ $set: update });
   }
   
   async function saveRow(rowIndex: number) {
@@ -131,12 +206,33 @@
     try {
       saving = true;
       errorMsg = '';
-      const sets = Object.entries(rowEdits)
-        .map(([col, val]) => (val === null ? `${col} = NULL` : `${col} = '${String(val).replace(/'/g, "''")}'`))
-        .join(', ');
-      const where = buildWhereClause(data[rowIndex]);
-      const sql = `UPDATE ${tableName} SET ${sets} WHERE ${where}`;
-      await executeSqlQuery({ sql });
+      
+      let sql: string;
+      
+      // 根据数据库类型生成不同的更新语句
+      console.log('[EditableTable.saveRow] 数据库类型:', currentDatabaseType, '表名:', tableName, 'connectionId:', connectionId);
+      
+      if (currentDatabaseType === 'mongodb') {
+        // MongoDB使用updateOne语法
+        if (!tableName || tableName.trim() === '') {
+          errorMsg = '无法确定集合名，请确保查询语句格式正确（如：db.collection_name.find({})）';
+          return;
+        }
+        const query = buildMongoQuery(data[rowIndex]);
+        const update = buildMongoUpdate(rowEdits);
+        sql = `db.${tableName.trim()}.updateOne(${query}, ${update})`;
+        console.log('[EditableTable.saveRow] 生成MongoDB更新语句:', sql, '集合名:', tableName);
+      } else {
+        // SQL数据库使用标准UPDATE语句
+        const sets = Object.entries(rowEdits)
+          .map(([col, val]) => (val === null ? `${col} = NULL` : `${col} = '${String(val).replace(/'/g, "''")}'`))
+          .join(', ');
+        const where = buildWhereClause(data[rowIndex]);
+        sql = `UPDATE ${tableName} SET ${sets} WHERE ${where}`;
+        console.log('[EditableTable.saveRow] 生成SQL更新语句:', sql);
+      }
+      
+      await executeSqlQuery({ sql, connection_id: connectionId || undefined });
       // 本地应用修改
       Object.entries(rowEdits).forEach(([col, val]) => (data[rowIndex][col] = val));
       edits.delete(rowIndex);
@@ -271,7 +367,7 @@
                     on:blur={(e) => commitEditFromEvent(rowIndex, col, e)}
                     on:keydown={(e) => e.key === 'Enter' && commitEditFromEvent(rowIndex, col, e)}
                     class="w-full px-2 py-1 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-blue-300 dark:border-blue-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    autofocus
+                    use:autofocus
                   />
                 {:else}
                   <button

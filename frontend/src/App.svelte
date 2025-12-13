@@ -7,6 +7,7 @@
   import QueryTab from './components/QueryTab.svelte';
   import ShortcutsHelpDialog from './components/ShortcutsHelpDialog.svelte';
   import AiHistoryPanel from './components/AiHistoryPanel.svelte';
+  import SqlFavorites from './components/SqlFavorites.svelte';
   import Tooltip from './components/Tooltip.svelte';
   import TableCopilot from './components/TableCopilot.svelte';
   import VisualTableBuilder from './components/VisualTableBuilder.svelte';
@@ -18,6 +19,7 @@
   // 侧边栏状态
   let showConnectionManager = false;
   let showAiHistory = false;
+  let showSqlFavorites = false;
   let sidebarWidth = 240; // 侧边栏宽度
   let isResizing = false;
   let showShortcutsHelp = false;
@@ -208,6 +210,17 @@
         handler: () => {
           showAiHistory = true;
         }
+      },
+      {
+        id: 'show-sql-favorites',
+        key: 'f',
+        ctrl: true,
+        shift: true,
+        description: '显示SQL收藏夹',
+        category: 'help',
+        handler: () => {
+          showSqlFavorites = true;
+        }
       }
     ]);
 
@@ -255,6 +268,14 @@
           🤖 AI历史
         </button>
       </Tooltip>
+      <Tooltip text="打开SQL收藏夹 (Ctrl+Shift+F)" position="bottom">
+        <button 
+          on:click={() => showSqlFavorites = true}
+          class="text-xs bg-yellow-50 hover:bg-yellow-100 dark:bg-yellow-900/20 dark:hover:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400 px-3 py-1.5 rounded-md transition-colors"
+        >
+          ⭐ SQL收藏
+        </button>
+      </Tooltip>
       <Tooltip text="管理数据库连接" position="bottom">
         <button on:click={() => showConnectionManager = !showConnectionManager}
           class="text-xs bg-green-50 hover:bg-green-100 dark:bg-green-900/20 dark:hover:bg-green-900/30 text-green-600 dark:text-green-400 px-3 py-1.5 rounded-md transition-colors">
@@ -274,14 +295,26 @@
       <!-- 数据库树头部 -->
       <div class="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">数据库对象</h2>
-        <Tooltip text="打开连接管理" position="left">
-          <button 
-            on:click={() => showConnectionManager = !showConnectionManager}
-            class="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-medium"
-          >
-            ⚙️
-          </button>
-        </Tooltip>
+        <div class="flex items-center space-x-2">
+          <Tooltip text="打开SQL收藏夹" position="left">
+            <button 
+              on:click={() => showSqlFavorites = true}
+              class="text-xs text-yellow-600 hover:text-yellow-700 dark:text-yellow-400 dark:hover:text-yellow-300 font-medium"
+              title="SQL收藏夹"
+            >
+              ⭐
+            </button>
+          </Tooltip>
+          <Tooltip text="打开连接管理" position="left">
+            <button 
+              on:click={() => showConnectionManager = !showConnectionManager}
+              class="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-medium"
+              title="连接管理"
+            >
+              +
+            </button>
+          </Tooltip>
+        </div>
       </div>
       
       <!-- 数据库树内容 -->
@@ -341,6 +374,19 @@
 
 <!-- AI生成历史面板 -->
 <AiHistoryPanel bind:visible={showAiHistory} />
+
+<!-- SQL收藏夹 -->
+<SqlFavorites 
+  bind:visible={showSqlFavorites}
+  on:apply={(e) => {
+    // 将收藏的SQL应用到当前活动的标签页
+    if (currentActiveTab) {
+      window.dispatchEvent(new CustomEvent('apply-sql', { 
+        detail: { tabId: currentActiveTab.id, sql: e.detail.sql } 
+      }));
+    }
+  }}
+/>
 
 <!-- AI建表助手 -->
 <TableCopilot />

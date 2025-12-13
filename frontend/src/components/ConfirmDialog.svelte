@@ -70,7 +70,9 @@
   >
     <div 
       class="bg-white dark:bg-gray-800 rounded-lg shadow-2xl max-w-md w-full transform transition-all"
-      on:click|stopPropagation
+      on:click|stopPropagation={() => {}}
+      role="document"
+      on:keydown={(e) => e.key === 'Escape' && handleCancel()}
     >
       <!-- 头部 -->
       <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">

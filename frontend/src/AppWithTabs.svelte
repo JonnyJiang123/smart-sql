@@ -6,6 +6,7 @@
   import DatabaseTree from './components/DatabaseTree.svelte';
   import ConnectionManager from './components/ConnectionManager.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
+  import SqlFavorites from './components/SqlFavorites.svelte';
   import { appSettings, toggleTheme, setupSystemThemeListener } from './stores/appStore';
 
   let title = '智能SQLer';
@@ -14,6 +15,7 @@
   // 侧边栏状态
   let showConnectionManager = false;
   let showSettings = false;
+  let showSqlFavorites = false;
   let sidebarWidth = 260; // 侧边栏宽度
   let isResizing = false;
   let sidebarCollapsed = false; // 侧边栏折叠状态
@@ -105,6 +107,13 @@
       }
       return;
     }
+    
+    // Ctrl+Shift+F: 打开SQL收藏夹
+    if (event.ctrlKey && event.shiftKey && event.key === 'f') {
+      event.preventDefault();
+      showSqlFavorites = true;
+      return;
+    }
   }
 
   // 组件挂载时注册快捷键和设置主题
@@ -165,6 +174,14 @@
     <div class="flex items-center space-x-2">
         <!-- 桌面端按钮：显示文字 -->
         <button 
+          on:click={() => showSqlFavorites = true}
+          class="text-xs bg-yellow-900/80 hover:bg-yellow-800 text-yellow-300 px-3 py-1.5 rounded-md transition-colors flex items-center space-x-1"
+          title="SQL收藏夹 (Ctrl+Shift+F)"
+        >
+          <span>⭐</span>
+          <span class="hidden sm:inline">SQL收藏</span>
+        </button>
+        <button 
           on:click={() => showConnectionManager = !showConnectionManager}
           class="text-xs bg-blue-900/80 hover:bg-blue-800 text-blue-300 px-3 py-1.5 rounded-md transition-colors flex items-center space-x-1"
         >
@@ -201,6 +218,13 @@
       <div class="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">数据库</h2>
         <div class="flex items-center space-x-2">
+          <button 
+            on:click={() => showSqlFavorites = true}
+            class="text-xs text-yellow-600 hover:text-yellow-700 dark:text-yellow-400 dark:hover:text-yellow-300 font-medium"
+            title="SQL收藏夹"
+          >
+            ⭐
+          </button>
           <button 
             on:click={() => showConnectionManager = !showConnectionManager}
             class="text-xs text-blue-400 hover:text-blue-300 font-medium"
@@ -290,6 +314,20 @@
     </div>
   </div>
 {/if}
+
+<!-- SQL收藏夹 -->
+<SqlFavorites 
+  bind:visible={showSqlFavorites}
+  on:apply={(e) => {
+    // 将收藏的SQL应用到当前活动的标签页
+    const activeTab = $tabStore.tabs.find(t => t.isActive);
+    if (activeTab) {
+      window.dispatchEvent(new CustomEvent('apply-sql', { 
+        detail: { tabId: activeTab.id, sql: e.detail.sql } 
+      }));
+    }
+  }}
+/>
 
 <!-- 设置面板 -->
 <SettingsPanel bind:show={showSettings} />

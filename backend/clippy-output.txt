@@ -1,0 +1,238 @@
+﻿cargo :     Checking smart-sql-backend v0.1.0 (F:\vscodeProjects\ai\smart-sql\backend)
+所在位置 C:\Users\Administrator\AppData\Local\Temp\ps-script-dd81b317-3f73-4daf-a40a-22cc17213ec4.ps1:90 字符: 44
++ ... t-sql\backend; cargo clippy --all-targets -- -D warnings 2>&1 | Out-F ...
++                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Checking sm...rt-sql\backend):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+error: `assert!(true)` will be optimized out by the compiler
+  --> tests\api_integration_test.rs:38:5
+   |
+38 |     assert!(true, "璺敱鍒涘缓鎴愬姛");
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: remove it
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#assertions_on_c
+onstants
+   = note: `-D clippy::assertions-on-constants` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::assertions_on_constants)]`
+
+error: could not compile `smart-sql-backend` (test "api_integration_test") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: unused imports: `DatabaseManager`, `DatabasePool`, and `DatabaseType`
+ --> tests\bulk_operations_test.rs:4:29
+  |
+4 | use smart_sql_backend::db::{DatabaseManager, DatabasePool, DatabaseType};
+  |                             ^^^^^^^^^^^^^^^  ^^^^^^^^^^^^  ^^^^^^^^^^^^
+  |
+  = note: `-D unused-imports` implied by `-D warnings`
+  = help: to override `-D warnings` add `#[allow(unused_imports)]`
+
+error: function `create_test_storage` is never used
+  --> tests\bulk_operations_test.rs:33:10
+   |
+33 | async fn create_test_storage() -> LocalStorageManager {
+   |          ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `-D dead-code` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(dead_code)]`
+
+error: function call inside of `expect`
+   --> tests\bulk_operations_test.rs:108:14
+    |
+108 |             .expect(&format!("鎻掑叆绗瑊}鏉¤褰曞け璐?, i));
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `unwrap_or_else(|_| panic!("鎻掑叆绗瑊}鏉¤褰曞け璐?, i))
+`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#expect_fun_cal
+l
+    = note: `-D clippy::expect-fun-call` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::expect_fun_call)]`
+
+error: function call inside of `expect`
+   --> tests\bulk_operations_test.rs:206:14
+    |
+206 |             .expect(&format!("鎻掑叆绗瑊}鏉¤褰曞け璐?, i));
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `unwrap_or_else(|_| panic!("鎻掑叆绗瑊}鏉¤褰曞け璐?, i))
+`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#expect_fun_cal
+l
+
+error: could not compile `smart-sql-backend` (test "bulk_operations_test") due to 4 previous errors
+error: unused variable: `indexes`
+   --> tests\schema_extraction_test.rs:118:9
+    |
+118 |     let indexes = db_manager.get_indexes("empty_table").await
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_indexes`
+    |
+    = note: `-D unused-variables` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(unused_variables)]`
+
+error: could not compile `smart-sql-backend` (test "schema_extraction_test") due to 1 previous error
+error: used `assert_eq!` with a literal bool
+  --> tests\performance_test.rs:14:5
+   |
+14 |     assert_eq!(perf.is_slow_query, false); // 600ms < 1000ms
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#bool_assert_com
+parison
+   = note: `-D clippy::bool-assert-comparison` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::bool_assert_comparison)]`
+help: replace it with `assert!(..)`
+   |
+14 -     assert_eq!(perf.is_slow_query, false); // 600ms < 1000ms
+14 +     assert!(!perf.is_slow_query); // 600ms < 1000ms
+   |
+
+error: used `assert_eq!` with a literal bool
+  --> tests\performance_test.rs:24:5
+   |
+24 |     assert_eq!(perf.is_slow_query, true);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#bool_assert_com
+parison
+help: replace it with `assert!(..)`
+   |
+24 -     assert_eq!(perf.is_slow_query, true);
+24 +     assert!(perf.is_slow_query);
+   |
+
+error: used `assert_eq!` with a literal bool
+  --> tests\performance_test.rs:56:5
+   |
+56 |     assert_eq!(perf.is_slow_query, true);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#bool_assert_com
+parison
+help: replace it with `assert!(..)`
+   |
+56 -     assert_eq!(perf.is_slow_query, true);
+56 +     assert!(perf.is_slow_query);
+   |
+
+error: used `assert_eq!` with a literal bool
+  --> tests\performance_test.rs:67:5
+   |
+67 |     assert_eq!(perf.is_slow_query, false);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#bool_assert_com
+parison
+help: replace it with `assert!(..)`
+   |
+67 -     assert_eq!(perf.is_slow_query, false);
+67 +     assert!(!perf.is_slow_query);
+   |
+
+error: used `assert_eq!` with a literal bool
+   --> tests\performance_test.rs:100:5
+    |
+100 |     assert_eq!(perf2.is_slow_query, false); // 1000ms涓嶇畻鎱㈡煡璇?    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#bool_assert_co
+mparison
+help: replace it with `assert!(..)`
+    |
+100 -     assert_eq!(perf2.is_slow_query, false); // 1000ms涓嶇畻鎱㈡煡璇?100 +     assert!(!perf2.is_slow_query); // 1000ms涓嶇
+畻鎱㈡煡璇?    |
+
+error: used `assert_eq!` with a literal bool
+   --> tests\performance_test.rs:103:5
+    |
+103 |     assert_eq!(perf3.is_slow_query, true); // 1001ms绠楁參鏌ヨ
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#bool_assert_co
+mparison
+help: replace it with `assert!(..)`
+    |
+103 -     assert_eq!(perf3.is_slow_query, true); // 1001ms绠楁參鏌ヨ
+103 +     assert!(perf3.is_slow_query); // 1001ms绠楁參鏌ヨ
+    |
+
+error: used `assert_eq!` with a literal bool
+   --> tests\performance_test.rs:120:5
+    |
+120 |     assert_eq!(perf.is_slow_query, false);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#bool_assert_co
+mparison
+help: replace it with `assert!(..)`
+    |
+120 -     assert_eq!(perf.is_slow_query, false);
+120 +     assert!(!perf.is_slow_query);
+    |
+
+error: used `assert_eq!` with a literal bool
+   --> tests\performance_test.rs:132:5
+    |
+132 |     assert_eq!(perf.is_slow_query, false);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#bool_assert_co
+mparison
+help: replace it with `assert!(..)`
+    |
+132 -     assert_eq!(perf.is_slow_query, false);
+132 +     assert!(!perf.is_slow_query);
+    |
+
+error: could not compile `smart-sql-backend` (test "performance_test") due to 8 previous errors
+error: `assert!(true)` will be optimized out by the compiler
+ --> tests\integration_test.rs:7:5
+  |
+7 |     assert!(true, "鍋ュ悍妫€鏌ラ€氳繃");
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: remove it
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#assertions_on_co
+nstants
+  = note: `-D clippy::assertions-on-constants` implied by `-D warnings`
+  = help: to override `-D warnings` add `#[allow(clippy::assertions_on_constants)]`
+
+error: `assert!(true)` will be optimized out by the compiler
+  --> tests\integration_test.rs:15:5
+   |
+15 |     assert!(true, "鏁版嵁搴撴ā鍧楁祴璇曢€氳繃");
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: remove it
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#assertions_on_c
+onstants
+
+error: `assert!(true)` will be optimized out by the compiler
+  --> tests\integration_test.rs:23:5
+   |
+23 |     assert!(true, "AI鏈嶅姟鍒濆鍖栨祴璇曢€氳繃");
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: remove it
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#assertions_on_c
+onstants
+
+error: `assert!(true)` will be optimized out by the compiler
+  --> tests\integration_test.rs:31:5
+   |
+31 |     assert!(true, "妯℃澘绠＄悊鍣ㄦ祴璇曢€氳繃");
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: remove it
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#assertions_on_c
+onstants
+
+error: `assert!(true)` will be optimized out by the compiler
+  --> tests\integration_test.rs:42:5
+   |
+42 |     assert!(true, "绯荤粺闆嗘垚娴嬭瘯妗嗘灦宸插氨缁?);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: remove it
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#assertions_on_c
+onstants
+
+error: could not compile `smart-sql-backend` (test "integration_test") due to 5 previous errors

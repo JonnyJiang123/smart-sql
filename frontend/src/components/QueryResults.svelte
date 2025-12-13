@@ -10,12 +10,33 @@
   export let isLoading = false;
   export let errorMessage = '';
   export let sql: string = '';
+  export let connectionId: number | null = null; // 当前连接ID
   
   let isEditMode = false;
   let editableTableName: string = '';
   $: if (sql) {
-    const m = sql.match(/from\s+([\w.]+)/i);
-    if (m) editableTableName = m[1];
+    // 尝试从SQL中提取表名（支持SQL格式）
+    let m = sql.match(/from\s+([\w.]+)/i);
+    if (m) {
+      editableTableName = m[1];
+    } else {
+      // 尝试从MongoDB查询中提取集合名
+      // 格式：db.collection_name.find() 或 db.getCollection("collection_name").find()
+      if (sql.startsWith('db.')) {
+        // 匹配 db.collection_name. 或 db.getCollection("collection_name").
+        const dbMatch = sql.match(/db\.(?:getCollection\(["']([^"']+)["']\)|([\w]+))\./);
+        if (dbMatch) {
+          editableTableName = dbMatch[1] || dbMatch[2];
+        } else {
+          // 如果没有匹配到，尝试直接提取 db. 后面的第一个单词
+          const simpleMatch = sql.match(/db\.([\w]+)/);
+          if (simpleMatch) {
+            editableTableName = simpleMatch[1];
+          }
+        }
+      }
+    }
+    console.log('[QueryResults] 提取的表名/集合名:', editableTableName, 'SQL:', sql);
   }
   
   // 分页相关状态
@@ -450,8 +471,9 @@
       {#if isEditMode}
         <div class="p-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
           <div class="flex items-center space-x-2">
-            <label class="text-xs text-gray-600 dark:text-gray-400">目标表:</label>
+            <label for="editable-table-name-input" class="text-xs text-gray-600 dark:text-gray-400">目标表:</label>
             <input
+              id="editable-table-name-input"
               type="text"
               bind:value={editableTableName}
               placeholder="请输入要更新的表名"
@@ -459,7 +481,7 @@
             />
           </div>
         </div>
-        <EditableTable columns={result.columns} rows={result.rows} tableName={editableTableName} />
+        <EditableTable columns={result.columns} rows={result.rows} tableName={editableTableName} {connectionId} />
       {:else}
       <!-- 表格外层容器：小屏幕横向滚动 -->
       <div class="overflow-x-auto">

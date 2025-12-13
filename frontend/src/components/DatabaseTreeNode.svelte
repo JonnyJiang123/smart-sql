@@ -248,18 +248,21 @@
   <div 
     class="fixed inset-0 z-40"
     on:click={handleClickOutside}
+    tabindex="-1"
   ></div>
 {/if}
 
 <div class="tree-node">
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
   <div 
     class="flex items-center py-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer transition-all duration-150 group focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 focus-visible:outline-none dark:focus-visible:ring-offset-gray-900"
     class:bg-blue-50={isDragOver}
     class:border-l-2={isDragOver}
     class:border-blue-500={isDragOver}
     class:opacity-50={draggedNode?.id === node.id}
+    role="button"
     tabindex="0" 
     style="padding-left: {level * 1.5 + 0.5}rem;"
     on:click={toggleNode}

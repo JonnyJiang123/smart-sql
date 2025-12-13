@@ -108,24 +108,41 @@
       close();
     }
   }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && visible) {
+      close();
+    }
+  }
 </script>
+
+<svelte:window on:keydown={handleKeydown} />
 
 {#if visible}
   <!-- 遮罩层 -->
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div
     class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center"
     on:click={handleBackdropClick}
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="favorites-dialog-title"
+    tabindex="-1"
   >
     <!-- 主面板 -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div
       class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-5xl h-[80vh] flex flex-col"
-      on:click|stopPropagation
+      on:click|stopPropagation={() => {}}
+      role="document"
+      tabindex="-1"
     >
       <!-- 头部 -->
       <div class="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
         <div class="flex items-center space-x-2">
           <span class="text-2xl">⭐</span>
-          <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">SQL收藏夹</h2>
+          <h2 id="favorites-dialog-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">SQL收藏夹</h2>
           <span class="text-sm text-gray-500 dark:text-gray-400">({favorites.length})</span>
         </div>
         

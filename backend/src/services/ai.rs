@@ -407,4 +407,177 @@ impl AiService {
         log::debug!("[AI-Service] 解释内容: {}", result);
         Ok(result)
     }
+    
+    // SQL转自然语言（反向转换）
+    pub async fn sql_to_natural_language(
+        &self,
+        sql: &str,
+        database_type: Option<&str>,
+    ) -> Result<String, AiServiceError> {
+        log::info!("[AI-Service] 开始SQL转自然语言 - SQL长度: {}, 数据库类型: {:?}", sql.len(), database_type);
+        log::debug!("[AI-Service] 待转换SQL: {}", sql);
+        
+        let mut messages = Vec::new();
+        
+        // 准备模板变量
+        let mut variables = HashMap::new();
+        variables.insert("database_type".to_string(), database_type.unwrap_or("通用SQL").to_string());
+
+        // 构建系统提示
+        let system_prompt = format!(
+            "你是一个SQL专家，擅长将SQL查询语句转换为清晰、易懂的自然语言描述。\n\
+            数据库类型: {}\n\n\
+            请将SQL查询转换为自然语言，要求：\n\
+            1. 使用简洁明了的语言\n\
+            2. 说明查询的主要目的\n\
+            3. 描述涉及的表格和字段\n\
+            4. 说明查询条件和排序方式\n\
+            5. 如果有聚合函数，说明聚合的内容\n\
+            6. 使用中文回答",
+            variables.get("database_type").unwrap_or(&"通用SQL".to_string())
+        );
+        
+        messages.push(("system".to_string(), system_prompt));
+        messages.push(("user".to_string(), format!("请将以下SQL查询转换为自然语言描述：\n{}", sql)));
+        
+        // 调用聊天完成API
+        let result = self.chat_completion(messages, Some(0.3), Some(2000)).await?;
+        log::info!("[AI-Service] SQL转自然语言完成 - 描述长度: {}", result.len());
+        log::debug!("[AI-Service] 自然语言描述: {}", result);
+        Ok(result)
+    }
+    
+    // SQL智能补全建议
+    pub async fn suggest_sql_completion(
+        &self,
+        partial_sql: &str,
+        database_schema: Option<&str>,
+        database_type: Option<&str>,
+    ) -> Result<Vec<String>, AiServiceError> {
+        log::info!("[AI-Service] 开始SQL智能补全 - 部分SQL长度: {}, 数据库类型: {:?}", 
+            partial_sql.len(), database_type);
+        log::debug!("[AI-Service] 部分SQL: {}", partial_sql);
+        
+        let mut messages = Vec::new();
+        
+        // 准备模板变量
+        let mut variables = HashMap::new();
+        variables.insert("database_type".to_string(), database_type.unwrap_or("通用SQL").to_string());
+        if let Some(schema) = database_schema {
+            variables.insert("database_schema".to_string(), schema.to_string());
+        }
+
+        // 构建系统提示
+        let mut system_prompt = format!(
+            "你是一个SQL专家，擅长根据部分SQL语句提供智能补全建议。\n\
+            数据库类型: {}\n",
+            variables.get("database_type").unwrap_or(&"通用SQL".to_string())
+        );
+        
+        if let Some(schema) = database_schema {
+            system_prompt.push_str(&format!("数据库结构:\n{}\n", schema));
+        }
+        
+        system_prompt.push_str(
+            "请根据部分SQL语句，提供3-5个可能的补全建议。\n\
+            要求：\n\
+            1. 每个建议应该是完整的、可执行的SQL语句\n\
+            2. 建议应该符合SQL语法规范\n\
+            3. 建议应该与部分SQL的意图一致\n\
+            4. 使用JSON数组格式返回，每个元素是一个补全建议\n\
+            5. 只返回JSON数组，不要其他文字说明\n\n\
+            返回格式示例：\n\
+            [\"SELECT * FROM users WHERE id = 1\", \"SELECT name, email FROM users LIMIT 10\", \"SELECT COUNT(*) FROM users\"]"
+        );
+        
+        messages.push(("system".to_string(), system_prompt));
+        messages.push(("user".to_string(), format!("请为以下部分SQL提供补全建议：\n{}", partial_sql)));
+        
+        // 调用聊天完成API
+        let result = self.chat_completion(messages, Some(0.5), Some(1500)).await?;
+        
+        // 解析JSON数组
+        let suggestions: Vec<String> = match serde_json::from_str(&result) {
+            Ok(suggestions) => suggestions,
+            Err(_) => {
+                // 如果解析失败，尝试提取可能的SQL语句
+                log::warn!("[AI-Service] JSON解析失败，尝试提取SQL语句");
+                result
+                    .lines()
+                    .filter_map(|line| {
+                        let line = line.trim();
+                        if line.starts_with("SELECT") || line.starts_with("select") {
+                            Some(line.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            }
+        };
+        
+        log::info!("[AI-Service] SQL智能补全完成 - 建议数量: {}", suggestions.len());
+        log::debug!("[AI-Service] 补全建议: {:?}", suggestions);
+        Ok(suggestions)
+    }
+    
+    // 对话式AI分析（多轮对话）
+    pub async fn chat_analysis(
+        &self,
+        conversation_history: Vec<(String, String)>, // (role, content) 对
+        current_query: &str,
+        database_schema: Option<&str>,
+        database_type: Option<&str>,
+    ) -> Result<String, AiServiceError> {
+        log::info!("[AI-Service] 开始对话式AI分析 - 历史消息数: {}, 当前查询长度: {}", 
+            conversation_history.len(), current_query.len());
+        log::debug!("[AI-Service] 当前查询: {}", current_query);
+        
+        let mut messages = Vec::new();
+        
+        // 准备模板变量
+        let mut variables = HashMap::new();
+        variables.insert("database_type".to_string(), database_type.unwrap_or("通用SQL").to_string());
+        if let Some(schema) = database_schema {
+            variables.insert("database_schema".to_string(), schema.to_string());
+        }
+
+        // 构建系统提示
+        let mut system_prompt = format!(
+            "你是一个专业的数据库分析助手，擅长通过对话帮助用户分析数据库和生成SQL查询。\n\
+            数据库类型: {}\n",
+            variables.get("database_type").unwrap_or(&"通用SQL".to_string())
+        );
+        
+        if let Some(schema) = database_schema {
+            system_prompt.push_str(&format!("数据库结构:\n{}\n", schema));
+        }
+        
+        system_prompt.push_str(
+            "你的任务是：\n\
+            1. 理解用户的查询意图\n\
+            2. 根据数据库结构提供准确的SQL建议\n\
+            3. 解释SQL查询的含义和结果\n\
+            4. 提供数据库分析洞察\n\
+            5. 使用友好、专业的语言与用户交流\n\
+            6. 如果用户的问题需要SQL，直接提供SQL语句\n\
+            7. 使用中文回答"
+        );
+        
+        messages.push(("system".to_string(), system_prompt));
+        
+        // 添加历史对话
+        for (role, content) in conversation_history {
+            messages.push((role, content));
+        }
+        
+        // 添加当前查询
+        messages.push(("user".to_string(), current_query.to_string()));
+        
+        // 调用聊天完成API
+        let result = self.chat_completion(messages, Some(0.7), Some(3000)).await?;
+        log::info!("[AI-Service] 对话式AI分析完成 - 回复长度: {}", result.len());
+        log::debug!("[AI-Service] AI回复: {}", result);
+        Ok(result)
+    }
 }

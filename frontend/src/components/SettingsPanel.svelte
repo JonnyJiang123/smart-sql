@@ -114,13 +114,12 @@
     aria-label="关闭设置"
   ></div>
 
-  <!-- 设置面板 -->
-  <div
-    class="fixed inset-y-0 right-0 w-96 bg-white dark:bg-gray-800 shadow-2xl z-50 overflow-y-auto transition-transform"
-    on:click|stopPropagation
-    role="dialog"
-    aria-label="设置面板"
-  >
+      <!-- 设置面板 -->
+      <div
+        class="fixed inset-y-0 right-0 w-96 bg-white dark:bg-gray-800 shadow-2xl z-50 overflow-y-auto transition-transform"
+        role="dialog"
+        aria-label="设置面板"
+      >
     <!-- 头部 -->
     <div class="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 z-10">
       <div class="flex items-center justify-between">
@@ -174,10 +173,11 @@
         <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">📝 编辑器</h3>
         <div class="space-y-4">
           <div>
-            <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
+            <label for="fontSizeInput" class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
               字体大小: <span class="font-mono text-blue-600 dark:text-blue-400">{fontSize}px</span>
             </label>
             <input
+              id="fontSizeInput"
               type="range"
               bind:value={fontSize}
               min="12"
@@ -209,10 +209,11 @@
       <section>
         <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">🌳 数据库树</h3>
         <div>
-          <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
+          <label for="dbTreeAutoExpandDepthInput" class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
             自动展开深度: <span class="font-mono text-blue-600 dark:text-blue-400">{dbTreeAutoExpandDepth}</span>
           </label>
           <input
+            id="dbTreeAutoExpandDepthInput"
             type="range"
             bind:value={dbTreeAutoExpandDepth}
             min="0"
@@ -238,10 +239,11 @@
         {:else}
           <div class="space-y-4">
             <div>
-              <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
+              <label for="aiBaseUrlInput" class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
                 API Base URL
               </label>
               <input
+                id="aiBaseUrlInput"
                 type="text"
                 bind:value={aiBaseUrl}
                 placeholder="https://api.openai.com/v1"
@@ -250,10 +252,11 @@
             </div>
             
             <div>
-              <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
+              <label for="aiApiKeyInput" class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
                 API Key
               </label>
               <input
+                id="aiApiKeyInput"
                 type="password"
                 bind:value={aiApiKey}
                 placeholder="sk-..."
@@ -262,10 +265,11 @@
             </div>
             
             <div>
-              <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
+              <label for="aiModelInput" class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
                 模型 (Model)
               </label>
               <input
+                id="aiModelInput"
                 type="text"
                 bind:value={aiModel}
                 placeholder="gpt-4o-mini"

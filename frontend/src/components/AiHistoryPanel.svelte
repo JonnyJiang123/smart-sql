@@ -113,12 +113,15 @@
 </script>
 
 {#if visible}
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div
     class="fixed inset-0 z-50 bg-black/50 dark:bg-black/70 flex items-center justify-center p-4"
     on:click={handleBackdropClick}
     on:keydown={(e) => e.key === 'Escape' && close()}
     role="dialog"
     aria-modal="true"
+    tabindex="-1"
   >
     <div class="bg-white dark:bg-gray-800 rounded-lg shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
       <!-- 头部 -->

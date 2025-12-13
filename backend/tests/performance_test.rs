@@ -11,7 +11,7 @@ fn test_performance_basic() {
     assert_eq!(perf.total_time_ms, 600);
     assert_eq!(perf.rows_read, 1000);
     assert_eq!(perf.rows_returned, 900);
-    assert_eq!(perf.is_slow_query, false); // 600ms < 1000ms
+    assert!(!perf.is_slow_query); // 600ms < 1000ms
     
     println!("✓ 基本性能指标验证通过");
 }
@@ -21,7 +21,7 @@ fn test_slow_query_detection() {
     // 测试慢查询检测（>1秒）
     let perf = QueryPerformance::new(1200, 100, 100, 50);
     
-    assert_eq!(perf.is_slow_query, true);
+    assert!(perf.is_slow_query);
     assert!(perf.warnings.iter().any(|w| w.contains("超过1秒")));
     
     println!("✓ 慢查询检测通过：1.3秒被标记为慢查询");
@@ -53,7 +53,7 @@ fn test_multiple_warnings() {
     // 测试多个警告同时触发
     let perf = QueryPerformance::new(1500, 200, 20000, 100);
     
-    assert_eq!(perf.is_slow_query, true);
+    assert!(perf.is_slow_query);
     assert!(perf.warnings.len() >= 2); // 至少有慢查询和大量扫描两个警告
     
     println!("✓ 多警告测试通过：触发了{}个警告", perf.warnings.len());
@@ -64,7 +64,7 @@ fn test_no_warnings() {
     // 测试没有警告的情况
     let perf = QueryPerformance::new(200, 50, 100, 95);
     
-    assert_eq!(perf.is_slow_query, false);
+    assert!(!perf.is_slow_query);
     assert_eq!(perf.warnings.len(), 0);
     
     println!("✓ 无警告测试通过：优秀的查询性能");
@@ -97,10 +97,10 @@ fn test_performance_edge_cases() {
     
     // 边界情况：刚好1秒
     let perf2 = QueryPerformance::new(900, 100, 100, 100);
-    assert_eq!(perf2.is_slow_query, false); // 1000ms不算慢查询
+    assert!(!perf2.is_slow_query); // 1000ms不算慢查询
     
     let perf3 = QueryPerformance::new(900, 101, 100, 100);
-    assert_eq!(perf3.is_slow_query, true); // 1001ms算慢查询
+    assert!(perf3.is_slow_query); // 1001ms算慢查询
     
     // 边界情况：刚好10000行
     let perf4 = QueryPerformance::new(200, 50, 10000, 5000);
@@ -117,7 +117,7 @@ fn test_high_efficiency_query() {
     // 测试高效查询（几乎所有扫描的行都被返回）
     let perf = QueryPerformance::new(50, 10, 100, 98);
     
-    assert_eq!(perf.is_slow_query, false);
+    assert!(!perf.is_slow_query);
     assert_eq!(perf.warnings.len(), 0);
     
     println!("✓ 高效查询测试通过：扫描100行返回98行，无警告");
@@ -129,7 +129,7 @@ fn test_perfect_query() {
     let perf = QueryPerformance::new(10, 5, 10, 10);
     
     assert_eq!(perf.total_time_ms, 15);
-    assert_eq!(perf.is_slow_query, false);
+    assert!(!perf.is_slow_query);
     assert_eq!(perf.warnings.len(), 0);
     
     println!("✓ 完美查询测试通过：15ms，精确匹配");

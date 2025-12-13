@@ -129,6 +129,7 @@
   <div
     class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center"
     on:click={close}
+    tabindex="-1"
   >
     <!-- 面板容器 -->
     <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -136,6 +137,7 @@
     <div
       class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full max-h-[85vh] overflow-hidden flex flex-col"
       on:click|stopPropagation
+      tabindex="-1"
     >
       <!-- 头部 -->
       <div class="p-4 border-b border-gray-200 dark:border-gray-700">

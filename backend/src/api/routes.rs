@@ -11,6 +11,9 @@ use crate::models::{
     SqlGenerateRequest, SqlGenerateResponse,
     SqlOptimizeRequest, SqlOptimizeResponse,
     SqlExplainRequest, SqlExplainResponse,
+    SqlToNaturalLanguageRequest, SqlToNaturalLanguageResponse,
+    SqlCompletionRequest, SqlCompletionResponse,
+    ChatAnalysisRequest, ChatAnalysisResponse, ChatMessage,
     TemplateListResponse, SqlQueryRequest, SqlQueryResult,
     ErrorResponse as ModelErrorResponse,
     TableColumn, TableIndex, TemplateType, TemplateResponse, TemplateRequest,
@@ -60,6 +63,7 @@ struct ApiTableSchema {
     pub name: String,
     pub columns: Vec<TableColumn>,
     pub indexes: Option<Vec<TableIndex>>,
+    pub foreign_keys: Option<Vec<crate::models::ForeignKeyInfo>>,
     pub description: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: Option<String>,
@@ -106,6 +110,12 @@ pub fn create_routes() -> Router {
                 .route("/sql/optimize", post(optimize_sql))
                 // 解释SQL
                 .route("/sql/explain", post(explain_sql))
+                // SQL转自然语言
+                .route("/sql/to-natural-language", post(sql_to_natural_language))
+                // SQL智能补全
+                .route("/sql/completion", post(sql_completion))
+                // 对话式AI分析
+                .route("/chat", post(chat_analysis))
                 // AI生成建表SQL
                 .route("/table/create", post(create_table))
                 // AI配置管理
@@ -391,6 +401,79 @@ fn parse_mongodb_projection(projection_str: &str) -> Result<mongodb::bson::Docum
     Ok(doc)
 }
 
+/// 将包含MongoDB扩展JSON格式（如$oid）的JSON值转换为BSON值
+/// 递归处理对象和数组，将{"$oid": "..."}转换为ObjectId
+fn json_value_to_bson(value: &serde_json::Value) -> Result<mongodb::bson::Bson, String> {
+    match value {
+        serde_json::Value::Null => Ok(mongodb::bson::Bson::Null),
+        serde_json::Value::Bool(b) => Ok(mongodb::bson::Bson::Boolean(*b)),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                // 如果i64在i32范围内，使用Int32；否则使用Int64
+                if i >= i32::MIN as i64 && i <= i32::MAX as i64 {
+                    Ok(mongodb::bson::Bson::Int32(i as i32))
+                } else {
+                    Ok(mongodb::bson::Bson::Int64(i))
+                }
+            } else if let Some(f) = n.as_f64() {
+                Ok(mongodb::bson::Bson::Double(f))
+            } else {
+                // 尝试解析为字符串后再解析为数字
+                let num_str = n.to_string();
+                if let Ok(i) = num_str.parse::<i32>() {
+                    Ok(mongodb::bson::Bson::Int32(i))
+                } else if let Ok(i) = num_str.parse::<i64>() {
+                    Ok(mongodb::bson::Bson::Int64(i))
+                } else if let Ok(f) = num_str.parse::<f64>() {
+                    Ok(mongodb::bson::Bson::Double(f))
+                } else {
+                    Err(format!("无法转换数字: {}", n))
+                }
+            }
+        }
+        serde_json::Value::String(s) => Ok(mongodb::bson::Bson::String(s.clone())),
+        serde_json::Value::Array(arr) => {
+            let bson_arr: Result<Vec<mongodb::bson::Bson>, String> = 
+                arr.iter().map(json_value_to_bson).collect();
+            Ok(mongodb::bson::Bson::Array(bson_arr?))
+        }
+        serde_json::Value::Object(obj) => {
+            // 检查是否是MongoDB扩展JSON格式
+            if obj.len() == 1 {
+                // 处理 $oid
+                if let Some(oid_value) = obj.get("$oid") {
+                    if let serde_json::Value::String(oid_str) = oid_value {
+                        match mongodb::bson::oid::ObjectId::parse_str(oid_str) {
+                            Ok(oid) => return Ok(mongodb::bson::Bson::ObjectId(oid)),
+                            Err(e) => return Err(format!("无效的ObjectId字符串 '{}': {}", oid_str, e)),
+                        }
+                    }
+                }
+                // 可以在这里添加其他MongoDB扩展JSON格式的处理，如 $date, $binary 等
+            }
+            
+            // 普通对象，递归转换所有字段
+            let mut doc = mongodb::bson::Document::new();
+            for (key, val) in obj {
+                let bson_val = json_value_to_bson(val)?;
+                doc.insert(key.clone(), bson_val);
+            }
+            Ok(mongodb::bson::Bson::Document(doc))
+        }
+    }
+}
+
+/// 将JSON字符串转换为MongoDB BSON文档，正确处理$oid等扩展JSON格式
+fn json_str_to_bson_document(json_str: &str) -> Result<mongodb::bson::Document, String> {
+    let json_value: serde_json::Value = serde_json::from_str(json_str)
+        .map_err(|e| format!("JSON解析失败: {}", e))?;
+    
+    match json_value_to_bson(&json_value)? {
+        mongodb::bson::Bson::Document(doc) => Ok(doc),
+        _ => Err("JSON值不是对象类型".to_string()),
+    }
+}
+
 
 
 // 常量定义
@@ -480,7 +563,7 @@ fn add_limit_to_sql(sql: &str) -> String {
                     // 查找LIMIT后面的数字
                     let mut limit_value = String::new();
                     for c in after_limit.chars() {
-                        if c.is_digit(10) {
+                        if c.is_ascii_digit() {
                             limit_value.push(c);
                         } else if c.is_whitespace() {
                             continue;
@@ -496,7 +579,7 @@ fn add_limit_to_sql(sql: &str) -> String {
                     
                     // 替换原有的LIMIT子句
                     let before_limit = &sql[..limit_index + 7];
-                    let after_limit_digit = if let Some(non_digit) = after_limit.find(|c: char| !c.is_digit(10) && !c.is_whitespace()) {
+                    let after_limit_digit = if let Some(non_digit) = after_limit.find(|c: char| !c.is_ascii_digit() && !c.is_whitespace()) {
                         &after_limit[non_digit..]
                     } else {
                         ""
@@ -778,18 +861,37 @@ async fn get_table_structure(
         }
     };
     
+    // 获取外键信息
+    let foreign_keys = match db_manager.get_foreign_keys(table_name).await {
+        Ok(fk_list) => {
+            if fk_list.is_empty() {
+                None
+            } else {
+                Some(fk_list)
+            }
+        },
+        Err(e) => {
+            log::warn!("获取外键信息失败: {}", e);
+            None
+        }
+    };
+    
+    let fk_count = foreign_keys.as_ref().map(|fk| fk.len()).unwrap_or(0);
     let response = ApiTableSchema {
         name: table_name.clone(),
         columns: columns.clone(),
         indexes: indexes.clone(),
+        foreign_keys,
         description: None,
         created_at: None,
         updated_at: None,
         row_count: None,
         size: None,
     };
-    info!("[API] POST /api/database/table/structure - 响应: 表={}, 字段数={}, 索引数={}", 
-        table_name, columns.len(), indexes.as_ref().map(|i| i.len()).unwrap_or(0));
+    info!("[API] POST /api/database/table/structure - 响应: 表={}, 字段数={}, 索引数={}, 外键数={}", 
+        table_name, columns.len(), 
+        indexes.as_ref().map(|i| i.len()).unwrap_or(0),
+        fk_count);
     if let Ok(resp_json) = serde_json::to_string(&response) {
         log::info!("[API] POST /api/database/table/structure - 响应体: {}", resp_json);
     }
@@ -1084,10 +1186,26 @@ async fn get_table_structure_internal(
                 }
             }).collect();
             
+            // 获取外键信息
+            let foreign_keys = match db_manager.get_foreign_keys(table_name).await {
+                Ok(fk_list) => {
+                    if fk_list.is_empty() {
+                        None
+                    } else {
+                        Some(fk_list)
+                    }
+                },
+                Err(e) => {
+                    log::warn!("获取外键信息失败: {}", e);
+                    None
+                }
+            };
+            
             Ok(ApiTableSchema {
                 name: table_name.to_string(),
                 columns,
                 indexes: Some(indexes),
+                foreign_keys,
                 description: None,
                 created_at: None,
                 updated_at: None,
@@ -1130,10 +1248,26 @@ async fn get_table_structure_internal(
                 });
             }
             
+            // 获取外键信息
+            let foreign_keys = match db_manager.get_foreign_keys(table_name).await {
+                Ok(fk_list) => {
+                    if fk_list.is_empty() {
+                        None
+                    } else {
+                        Some(fk_list)
+                    }
+                },
+                Err(e) => {
+                    log::warn!("获取外键信息失败: {}", e);
+                    None
+                }
+            };
+            
             Ok(ApiTableSchema {
                 name: table_name.to_string(),
                 columns,
                 indexes: None, // 简化处理，暂不获取PostgreSQL索引
+                foreign_keys,
                 description: None,
                 created_at: None,
                 updated_at: None,
@@ -1172,10 +1306,26 @@ async fn get_table_structure_internal(
                 });
             }
             
+            // 获取外键信息
+            let foreign_keys = match db_manager.get_foreign_keys(table_name).await {
+                Ok(fk_list) => {
+                    if fk_list.is_empty() {
+                        None
+                    } else {
+                        Some(fk_list)
+                    }
+                },
+                Err(e) => {
+                    log::warn!("获取外键信息失败: {}", e);
+                    None
+                }
+            };
+            
             Ok(ApiTableSchema {
                 name: table_name.to_string(),
                 columns,
                 indexes: None, // 简化处理，暂不获取SQLite索引
+                foreign_keys,
                 description: None,
                 created_at: None,
                 updated_at: None,
@@ -1190,6 +1340,7 @@ async fn get_table_structure_internal(
                 name: table_name.to_string(),
                 columns: Vec::new(),
                 indexes: None,
+                foreign_keys: None, // MongoDB不支持外键
                 description: None,
                 created_at: None,
                 updated_at: None,
@@ -1272,6 +1423,156 @@ async fn explain_sql(
                     details: None,
                 })
             ))
+        }
+    }
+}
+
+// SQL转自然语言处理函数
+async fn sql_to_natural_language(
+    Extension(ai_service): Extension<Option<AiService>>,
+    Extension(storage): Extension<LocalStorageManager>,
+    Json(req): Json<SqlToNaturalLanguageRequest>,
+) -> Result<Json<SqlToNaturalLanguageResponse>, (StatusCode, Json<ModelErrorResponse>)> {
+    info!("[API] POST /api/ai/sql/to-natural-language - 请求: SQL长度={}", req.sql.len());
+    debug!("[API] POST /api/ai/sql/to-natural-language - SQL内容: {}", req.sql);
+    
+    let ai_service = match ai_service {
+        Some(service) => service,
+        None => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ModelErrorResponse {
+                    error: "ai_service_unavailable".to_string(),
+                    message: "AI服务未配置，请先配置API密钥".to_string(),
+                    details: None,
+                })
+            ))
+        }
+    };
+    
+    match ai_service.sql_to_natural_language(&req.sql, req.database_type.as_deref()).await {
+        Ok(natural_language) => {
+            info!("[API] POST /api/ai/sql/to-natural-language - 响应成功: 描述长度={}", natural_language.len());
+            debug!("[API] POST /api/ai/sql/to-natural-language - 自然语言描述: {}", natural_language);
+            Ok(Json(SqlToNaturalLanguageResponse {
+                success: true,
+                natural_language: Some(natural_language),
+                error: None,
+            }))
+        },
+        Err(e) => {
+            error!("SQL转自然语言失败: {:?}", e);
+            Ok(Json(SqlToNaturalLanguageResponse {
+                success: false,
+                natural_language: None,
+                error: Some(format!("SQL转自然语言失败: {}", e)),
+            }))
+        }
+    }
+}
+
+// SQL智能补全处理函数
+async fn sql_completion(
+    Extension(ai_service): Extension<Option<AiService>>,
+    Extension(_storage): Extension<LocalStorageManager>,
+    Json(req): Json<SqlCompletionRequest>,
+) -> Result<Json<SqlCompletionResponse>, (StatusCode, Json<ModelErrorResponse>)> {
+    info!("[API] POST /api/ai/sql/completion - 请求: 部分SQL长度={}", req.partial_sql.len());
+    debug!("[API] POST /api/ai/sql/completion - 部分SQL内容: {}", req.partial_sql);
+    
+    let ai_service = match ai_service {
+        Some(service) => service,
+        None => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ModelErrorResponse {
+                    error: "ai_service_unavailable".to_string(),
+                    message: "AI服务未配置，请先配置API密钥".to_string(),
+                    details: None,
+                })
+            ))
+        }
+    };
+    
+    match ai_service.suggest_sql_completion(
+        &req.partial_sql,
+        req.database_schema.as_deref(),
+        req.database_type.as_deref(),
+    ).await {
+        Ok(suggestions) => {
+            info!("[API] POST /api/ai/sql/completion - 响应成功: 建议数量={}", suggestions.len());
+            debug!("[API] POST /api/ai/sql/completion - 补全建议: {:?}", suggestions);
+            Ok(Json(SqlCompletionResponse {
+                success: true,
+                suggestions: Some(suggestions),
+                error: None,
+            }))
+        },
+        Err(e) => {
+            error!("SQL智能补全失败: {:?}", e);
+            Ok(Json(SqlCompletionResponse {
+                success: false,
+                suggestions: None,
+                error: Some(format!("SQL智能补全失败: {}", e)),
+            }))
+        }
+    }
+}
+
+// 对话式AI分析处理函数
+async fn chat_analysis(
+    Extension(ai_service): Extension<Option<AiService>>,
+    Extension(_storage): Extension<LocalStorageManager>,
+    Json(req): Json<ChatAnalysisRequest>,
+) -> Result<Json<ChatAnalysisResponse>, (StatusCode, Json<ModelErrorResponse>)> {
+    info!("[API] POST /api/ai/chat - 请求: 查询长度={}, 历史消息数={}", 
+        req.query.len(), 
+        req.conversation_history.as_ref().map(|h| h.len()).unwrap_or(0));
+    debug!("[API] POST /api/ai/chat - 当前查询: {}", req.query);
+    
+    let ai_service = match ai_service {
+        Some(service) => service,
+        None => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ModelErrorResponse {
+                    error: "ai_service_unavailable".to_string(),
+                    message: "AI服务未配置，请先配置API密钥".to_string(),
+                    details: None,
+                })
+            ))
+        }
+    };
+    
+    // 转换对话历史格式
+    let conversation_history: Vec<(String, String)> = req.conversation_history
+        .unwrap_or_default()
+        .into_iter()
+        .map(|msg| (msg.role, msg.content))
+        .collect();
+    
+    match ai_service.chat_analysis(
+        conversation_history,
+        &req.query,
+        req.database_schema.as_deref(),
+        req.database_type.as_deref(),
+    ).await {
+        Ok(response) => {
+            info!("[API] POST /api/ai/chat - 响应成功: 回复长度={}", response.len());
+            debug!("[API] POST /api/ai/chat - AI回复: {}", response);
+            Ok(Json(ChatAnalysisResponse {
+                success: true,
+                response: Some(response),
+                error: None,
+            }))
+        },
+        Err(e) => {
+            error!("对话式AI分析失败: {:?}", e);
+            Ok(Json(ChatAnalysisResponse {
+                success: false,
+                response: None,
+                error: Some(format!("对话式AI分析失败: {}", e)),
+            }))
         }
     }
 }
@@ -1548,6 +1849,8 @@ async fn execute_query(
     // 执行查询
     let start = Instant::now();
     
+    log::info!("[API] 准备执行查询 - 数据库类型: {:?}, SQL: {}", db_manager.db_type, payload.sql);
+    
     let result = match &db_manager.pool {
         crate::db::DatabasePool::MySQL(pool) => {
             // 记录实际执行的SQL语句
@@ -1783,208 +2086,546 @@ async fn execute_query(
         }
         crate::db::DatabasePool::MongoDB(client, db_name) => {
             // 解析MongoDB查询语句，提取集合名、查询条件和投影参数
+            log::info!("[MongoDB Query] 进入MongoDB处理逻辑 - 数据库名: '{}', SQL长度: {}", db_name, payload.sql.len());
+            log::info!("[MongoDB Query] SQL内容: {}", payload.sql);
             let database = client.database(db_name);
+            log::info!("[MongoDB Query] 数据库对象创建成功");
             
             let sql = payload.sql.trim();
             let sql_lower = sql.to_lowercase();
             
-            // 解析集合名
-            let collection_name = if sql.starts_with("db.getCollection(") {
-                // 格式：db.getCollection("collection_name").find() 或 db.getCollection("collection_name").aggregate()
-                let method_split = if sql.contains(".find(") {
-                    ".find("
-                } else if sql.contains(".aggregate(") {
-                    ".aggregate("
-                } else {
-                    "."
-                };
+            // 检查是否是UPDATE操作（updateOne或updateMany）
+            if sql_lower.contains(".updateone(") || sql_lower.contains(".updatemany(") {
+                // 处理MongoDB更新操作
+                let is_update_one = sql_lower.contains(".updateone(");
+                let method_name = if is_update_one { ".updateOne(" } else { ".updateMany(" };
                 
-                if let Some(collection_match) = sql.split(method_split).next() {
-                    if let Some(name) = collection_match.split('"').nth(1) {
-                        name.to_string()
+                // 解析集合名
+                let collection_name = if sql.starts_with("db.getCollection(") {
+                    if let Some(collection_match) = sql.split(method_name).next() {
+                        if let Some(name) = collection_match.split('"').nth(1) {
+                            name.to_string()
+                        } else {
+                            collection_match.split("'").nth(1).unwrap_or_default().to_string()
+                        }
                     } else {
-                        // 尝试单引号
-                        collection_match.split("'").nth(1).unwrap_or_default().to_string()
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            Json(ModelErrorResponse {
+                                error: "invalid_collection_name".to_string(),
+                                message: "无法从MongoDB语句中提取集合名".to_string(),
+                                details: Some(sql.to_string()),
+                            })
+                        ));
+                    }
+                } else if sql.starts_with("db.") {
+                    // 格式：db.collection_name.updateOne(...)
+                    // 先找到 updateOne/updateMany 的位置
+                    if let Some(collection_part) = sql.split(method_name).next() {
+                        // collection_part 应该是 "db.collection_name"
+                        let parts: Vec<&str> = collection_part.split('.').collect();
+                        if parts.len() >= 2 {
+                            let name = parts[1].trim().to_string();
+                            if name.is_empty() {
+                                return Err((
+                                    StatusCode::BAD_REQUEST,
+                                    Json(ModelErrorResponse {
+                                        error: "empty_collection_name".to_string(),
+                                        message: "集合名不能为空".to_string(),
+                                        details: Some(sql.to_string()),
+                                    })
+                                ));
+                            }
+                            log::info!("[MongoDB Update] 从 '{}' 提取集合名: '{}'", collection_part, name);
+                            name
+                        } else {
+                            log::error!("[MongoDB Update] 无法解析集合名，parts: {:?}, sql: {}", parts, sql);
+                            return Err((
+                                StatusCode::BAD_REQUEST,
+                                Json(ModelErrorResponse {
+                                    error: "invalid_collection_name".to_string(),
+                                    message: format!("无法从MongoDB语句中提取集合名，格式应为 db.collection_name.updateOne(...): {}", sql),
+                                    details: Some(sql.to_string()),
+                                })
+                            ));
+                        }
+                    } else {
+                        log::error!("[MongoDB Update] 无法找到集合名部分，sql: {}", sql);
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            Json(ModelErrorResponse {
+                                error: "invalid_collection_name".to_string(),
+                                message: "无法从MongoDB语句中提取集合名".to_string(),
+                                details: Some(sql.to_string()),
+                            })
+                        ));
                     }
                 } else {
-                    sql.to_string()
-                }
-            } else if sql.starts_with("db.") {
-                // 格式：db.collection_name.find() 或 db.collection_name.aggregate()
-                let method_split = if sql.contains(".find(") {
-                    ".find("
-                } else if sql.contains(".aggregate(") {
-                    ".aggregate("
-                } else {
-                    "."
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(ModelErrorResponse {
+                            error: "invalid_mongodb_syntax".to_string(),
+                            message: format!("无效的MongoDB语句格式: {}", sql),
+                            details: Some(sql.to_string()),
+                        })
+                    ));
                 };
                 
-                if let Some(collection_part) = sql.split(method_split).next() {
-                    collection_part.split('.').nth(1).unwrap_or_default().to_string()
+                // 验证集合名不为空
+                if collection_name.is_empty() {
+                    log::error!("[MongoDB Update] 集合名为空，sql: {}", sql);
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(ModelErrorResponse {
+                            error: "empty_collection_name".to_string(),
+                            message: "集合名不能为空".to_string(),
+                            details: Some(sql.to_string()),
+                        })
+                    ));
+                }
+                
+                // 验证集合名不是数据库名（防止混淆）
+                if collection_name == *db_name {
+                    log::error!("[MongoDB Update] 集合名与数据库名相同，这可能是提取错误。集合名: {}, 数据库名: {}, sql: {}", collection_name, db_name, sql);
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(ModelErrorResponse {
+                            error: "invalid_collection_name".to_string(),
+                            message: format!("集合名不能与数据库名相同。集合名: {}, 数据库名: {}", collection_name, db_name),
+                            details: Some(sql.to_string()),
+                        })
+                    ));
+                }
+                
+                log::info!("[MongoDB Update] 集合名: '{}', 数据库名: '{}', SQL: {}", collection_name, db_name, sql);
+                
+                // 验证集合名和数据库名都不为空
+                if collection_name.trim().is_empty() {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(ModelErrorResponse {
+                            error: "empty_collection_name".to_string(),
+                            message: "集合名不能为空".to_string(),
+                            details: Some(sql.to_string()),
+                        })
+                    ));
+                }
+                
+                if db_name.trim().is_empty() {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(ModelErrorResponse {
+                            error: "empty_database_name".to_string(),
+                            message: "数据库名不能为空".to_string(),
+                            details: Some(sql.to_string()),
+                        })
+                    ));
+                }
+                
+                log::debug!("[MongoDB Update] 创建集合对象 - 数据库: '{}', 集合: '{}'", db_name, collection_name);
+                
+                // 确保集合名不包含数据库名（防止错误的命名空间）
+                let clean_collection_name = collection_name.trim();
+                if clean_collection_name.is_empty() {
+                    log::error!("[MongoDB Update] 集合名为空");
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(ModelErrorResponse {
+                            error: "empty_collection_name".to_string(),
+                            message: "集合名不能为空".to_string(),
+                            details: Some(sql.to_string()),
+                        })
+                    ));
+                }
+                
+                if clean_collection_name.contains('.') {
+                    log::error!("[MongoDB Update] 集合名包含点号，这可能导致命名空间错误: '{}'", clean_collection_name);
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(ModelErrorResponse {
+                            error: "invalid_collection_name".to_string(),
+                            message: format!("集合名不能包含点号: '{}'", clean_collection_name),
+                            details: Some(sql.to_string()),
+                        })
+                    ));
+                }
+                
+                // 验证命名空间格式
+                let expected_namespace = format!("{}.{}", db_name, clean_collection_name);
+                log::info!("[MongoDB Update] 预期命名空间: '{}'", expected_namespace);
+                
+                let collection = database.collection::<mongodb::bson::Document>(clean_collection_name);
+                log::debug!("[MongoDB Update] 集合对象创建成功 - 命名空间应为: '{}'", expected_namespace);
+                
+                // 验证数据库和集合是否存在（可选，但有助于诊断）
+                log::debug!("[MongoDB Update] 准备执行更新操作 - 数据库: '{}', 集合: '{}'", db_name, clean_collection_name);
+                
+                // 解析updateOne/updateMany的参数：updateOne(filter, update)
+                if let Some(update_params) = sql.split_once(method_name) {
+                    let params_part = update_params.1;
+                    if let Some(end_idx) = find_close_bracket(params_part) {
+                        let params_str = &params_part[..end_idx];
+                        let params: Vec<&str> = split_params(params_str);
+                        
+                        // 第一个参数是查询条件（filter）
+                        let filter_doc = if let Some(filter_str) = params.first() {
+                            let trimmed = filter_str.trim();
+                            if !trimmed.is_empty() && trimmed != "{}" {
+                                json_str_to_bson_document(trimmed)
+                                    .map_err(|e| {
+                                        log::error!("[MongoDB Update] Filter解析失败: {}, filter_str: {}", e, trimmed);
+                                        e
+                                    })
+                                    .ok()
+                            } else {
+                                Some(mongodb::bson::Document::new())
+                            }
+                        } else {
+                            Some(mongodb::bson::Document::new())
+                        };
+                        
+                        // 第二个参数是更新操作（update）
+                        let update_doc = if let Some(update_str) = params.get(1) {
+                            let trimmed = update_str.trim();
+                            if !trimmed.is_empty() && trimmed != "{}" {
+                                json_str_to_bson_document(trimmed)
+                                    .map_err(|e| {
+                                        log::error!("[MongoDB Update] Update解析失败: {}, update_str: {}", e, trimmed);
+                                        e
+                                    })
+                                    .ok()
+                            } else {
+                                return Err((
+                                    StatusCode::BAD_REQUEST,
+                                    Json(ModelErrorResponse {
+                                        error: "invalid_update_syntax".to_string(),
+                                        message: "MongoDB更新操作不能为空".to_string(),
+                                        details: Some(sql.to_string()),
+                                    })
+                                ));
+                            }
+                        } else {
+                            return Err((
+                                StatusCode::BAD_REQUEST,
+                                Json(ModelErrorResponse {
+                                    error: "invalid_update_syntax".to_string(),
+                                    message: "MongoDB更新操作缺少update参数".to_string(),
+                                    details: Some(sql.to_string()),
+                                })
+                            ));
+                        };
+                        
+                        let filter = filter_doc.unwrap_or_else(|| mongodb::bson::Document::new());
+                        let update = match update_doc {
+                            Some(doc) => doc,
+                            None => {
+                                return Err((
+                                    StatusCode::BAD_REQUEST,
+                                    Json(ModelErrorResponse {
+                                        error: "invalid_update_syntax".to_string(),
+                                        message: "MongoDB更新操作缺少update参数".to_string(),
+                                        details: Some(sql.to_string()),
+                                    })
+                                ));
+                            }
+                        };
+                        
+                        log::info!("[MongoDB Update] 执行更新 - 数据库: '{}', 集合: '{}', 命名空间: '{}.{}', filter: {:?}, update: {:?}", 
+                                   db_name, clean_collection_name, db_name, clean_collection_name, filter, update);
+                        
+                        // 验证集合名和数据库名的有效性（已在之前验证过，这里使用 clean_collection_name）
+                        if clean_collection_name.contains('.') || clean_collection_name.contains(' ') {
+                            return Err((
+                                StatusCode::BAD_REQUEST,
+                                Json(ModelErrorResponse {
+                                    error: "invalid_collection_name".to_string(),
+                                    message: format!("集合名包含无效字符: '{}'", collection_name),
+                                    details: Some(sql.to_string()),
+                                })
+                            ));
+                        }
+                        
+                        // 执行更新操作前再次验证集合名
+                        log::info!("[MongoDB Update] 执行前最终验证 - 数据库: '{}', 集合名: '{}', 命名空间: '{}.{}'", 
+                                   db_name, clean_collection_name, db_name, clean_collection_name);
+                        
+                        // 执行更新操作
+                        let result = if is_update_one {
+                            log::info!("[MongoDB Update] 调用 update_one - 数据库: '{}', 集合: '{}', 命名空间: '{}.{}'", 
+                                       db_name, clean_collection_name, db_name, clean_collection_name);
+                            collection.update_one(filter.clone(), update.clone(), None).await
+                        } else {
+                            log::info!("[MongoDB Update] 调用 update_many - 数据库: '{}', 集合: '{}', 命名空间: '{}.{}'", 
+                                       db_name, clean_collection_name, db_name, clean_collection_name);
+                            collection.update_many(filter.clone(), update.clone(), None).await
+                        };
+                        
+                        match result {
+                            Ok(update_result) => {
+                                let matched_count = update_result.matched_count;
+                                let modified_count = update_result.modified_count;
+                                
+                                log::info!("[MongoDB Update] 更新成功 - 匹配: {}, 修改: {}", matched_count, modified_count);
+                                
+                                // 返回更新结果（模拟查询结果格式）
+                                SqlQueryResult {
+                                    columns: vec!["matched_count".to_string(), "modified_count".to_string()],
+                                    rows: vec![vec![
+                                        serde_json::json!(matched_count),
+                                        serde_json::json!(modified_count),
+                                    ]],
+                                    row_count: 1,
+                                    execution_time_ms: start.elapsed().as_millis(),
+                                    total_rows: None,
+                                    page: None,
+                                    page_size: None,
+                                    has_more: false,
+                                    performance: None,
+                                }
+                            },
+                            Err(e) => {
+                                log::error!("[MongoDB Update] 更新失败: {}", e);
+                                log::error!("[MongoDB Update] 错误详情 - 数据库: '{}', 集合: '{}', 命名空间: '{}.{}', filter: {:?}, update: {:?}", 
+                                           db_name, clean_collection_name, db_name, clean_collection_name, filter, update);
+                                log::error!("[MongoDB Update] Filter文档序列化: {:?}", 
+                                           mongodb::bson::to_bson(&filter).ok());
+                                log::error!("[MongoDB Update] Update文档序列化: {:?}", 
+                                           mongodb::bson::to_bson(&update).ok());
+                                
+                                return Err((
+                                    StatusCode::BAD_REQUEST,
+                                    Json(ModelErrorResponse {
+                                        error: "update_error".to_string(),
+                                        message: format!("MongoDB更新操作失败: {} (数据库: '{}', 集合: '{}', 命名空间: '{}.{}')", e, db_name, clean_collection_name, db_name, clean_collection_name),
+                                        details: Some(format!("数据库: '{}', 集合: '{}', 命名空间: '{}.{}', filter: {:?}, update: {:?}", db_name, clean_collection_name, db_name, clean_collection_name, filter, update)),
+                                    })
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            Json(ModelErrorResponse {
+                                error: "invalid_update_syntax".to_string(),
+                                message: "MongoDB更新语句格式错误：无法解析参数".to_string(),
+                                details: None,
+                            })
+                        ));
+                    }
                 } else {
-                    sql.to_string()
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(ModelErrorResponse {
+                            error: "invalid_update_syntax".to_string(),
+                            message: "MongoDB更新语句格式错误：找不到updateOne或updateMany方法".to_string(),
+                            details: None,
+                        })
+                    ));
                 }
             } else {
-                // 直接的集合名
-                sql.to_string()
-            };
-            
-            let collection = database.collection::<mongodb::bson::Document>(&collection_name);
-            
-            // 解析find()方法的参数：find(query, projection)
-            let mut query = None;
-            let mut projection = None;
-            
-            // 查找find()方法的参数部分
-            if let Some(find_params) = sql.split_once(".find(") {
-                let params_part = find_params.1;
-                // 找到find()方法的结束括号
-                if let Some(end_idx) = find_close_bracket(params_part) {
-                    let params_str = &params_part[..end_idx];
+                // 原有的查询逻辑（find/aggregate）
+                // 解析集合名
+                let collection_name = if sql.starts_with("db.getCollection(") {
+                    // 格式：db.getCollection("collection_name").find() 或 db.getCollection("collection_name").aggregate()
+                    let method_split = if sql.contains(".find(") {
+                        ".find("
+                    } else if sql.contains(".aggregate(") {
+                        ".aggregate("
+                    } else {
+                        "."
+                    };
                     
-                    // 解析参数
-                    let params: Vec<&str> = split_params(params_str);
+                    if let Some(collection_match) = sql.split(method_split).next() {
+                        if let Some(name) = collection_match.split('"').nth(1) {
+                            name.to_string()
+                        } else {
+                            // 尝试单引号
+                            collection_match.split("'").nth(1).unwrap_or_default().to_string()
+                        }
+                    } else {
+                        sql.to_string()
+                    }
+                } else if sql.starts_with("db.") {
+                    // 格式：db.collection_name.find() 或 db.collection_name.aggregate()
+                    let method_split = if sql.contains(".find(") {
+                        ".find("
+                    } else if sql.contains(".aggregate(") {
+                        ".aggregate("
+                    } else {
+                        "."
+                    };
                     
-                    // 第一个参数是查询条件
-                    if let Some(query_str) = params.get(0) {
-                        let trimmed = query_str.trim();
-                        if !trimmed.is_empty() && trimmed != "{}" {
-                            // 使用mongodb的bson::Document::from_reader方法解析JSON字符串
-                            if let Ok(doc) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                                // 将serde_json::Value转换为bson::Document
-                                if let Ok(bson_doc) = mongodb::bson::to_document(&doc) {
-                                    query = Some(bson_doc);
+                    if let Some(collection_part) = sql.split(method_split).next() {
+                        collection_part.split('.').nth(1).unwrap_or_default().to_string()
+                    } else {
+                        sql.to_string()
+                    }
+                } else {
+                    // 直接的集合名
+                    sql.to_string()
+                };
+                
+                let collection = database.collection::<mongodb::bson::Document>(&collection_name);
+                
+                // 解析find()方法的参数：find(query, projection)
+                let mut query = None;
+                let mut projection = None;
+                
+                // 查找find()方法的参数部分
+                if let Some(find_params) = sql.split_once(".find(") {
+                    let params_part = find_params.1;
+                    // 找到find()方法的结束括号
+                    if let Some(end_idx) = find_close_bracket(params_part) {
+                        let params_str = &params_part[..end_idx];
+                        
+                        // 解析参数
+                        let params: Vec<&str> = split_params(params_str);
+                        
+                        // 第一个参数是查询条件
+                        if let Some(query_str) = params.first() {
+                            let trimmed = query_str.trim();
+                            if !trimmed.is_empty() && trimmed != "{}" {
+                                // 使用新的辅助函数解析JSON字符串，正确处理$oid等扩展JSON格式
+                                match json_str_to_bson_document(trimmed) {
+                                    Ok(bson_doc) => {
+                                        query = Some(bson_doc);
+                                    }
+                                    Err(e) => {
+                                        log::warn!("[MongoDB Find] 查询条件解析失败: {}, query_str: {}", e, trimmed);
+                                    }
                                 }
                             }
                         }
-                    }
-                    
-                    // 第二个参数是投影
-                    if let Some(projection_str) = params.get(1) {
-                        let trimmed = projection_str.trim();
-                        if !trimmed.is_empty() && trimmed != "{}" {
-                            // 尝试解析投影参数
-                            let parsed_projection = parse_mongodb_projection(trimmed);
-                            if let Ok(doc) = parsed_projection {
-                                projection = Some(doc);
-                            } else {
-                                log::warn!("解析投影参数失败: {}, 尝试使用serde_json解析", parsed_projection.unwrap_err());
-                                // 回退到使用serde_json解析
-                                if let Ok(doc) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                                    // 将serde_json::Value转换为bson::Document
-                                    if let Ok(bson_doc) = mongodb::bson::to_document(&doc) {
-                                        projection = Some(bson_doc);
+                        
+                        // 第二个参数是投影
+                        if let Some(projection_str) = params.get(1) {
+                            let trimmed = projection_str.trim();
+                            if !trimmed.is_empty() && trimmed != "{}" {
+                                // 尝试解析投影参数
+                                let parsed_projection = parse_mongodb_projection(trimmed);
+                                if let Ok(doc) = parsed_projection {
+                                    projection = Some(doc);
+                                } else {
+                                    log::warn!("[MongoDB Find] 投影参数解析失败: {}, 尝试使用JSON解析", parsed_projection.unwrap_err());
+                                    // 回退到使用JSON解析，但使用新的辅助函数以支持$oid
+                                    match json_str_to_bson_document(trimmed) {
+                                        Ok(bson_doc) => {
+                                            projection = Some(bson_doc);
+                                        }
+                                        Err(e) => {
+                                            log::warn!("[MongoDB Find] 投影参数JSON解析也失败: {}", e);
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
-            
-            // 执行查询
-            let mut options = mongodb::options::FindOptions::default();
-            
-            // 设置投影参数
-            options.projection = projection;
-            
-            // 添加LIMIT限制
-            // 检查查询中是否已经包含limit
-            let has_limit = sql_lower.contains(" limit") || sql_lower.contains(".limit(");
-            
-            if has_limit {
-                // 如果有limit，提取limit值并限制在1500以内
-                if let Some(limit_index) = sql_lower.find(".limit(") {
-                    let after_limit = &sql[limit_index + 7..];
-                    
-                    // 查找limit后面的数字
-                    let mut limit_value = String::new();
-                    for c in after_limit.chars() {
-                        if c.is_digit(10) {
-                            limit_value.push(c);
-                        } else if c.is_whitespace() {
-                            continue;
-                        } else {
-                            break;
+                
+                // 执行查询
+                let mut options = mongodb::options::FindOptions::default();
+                
+                // 设置投影参数
+                options.projection = projection;
+                
+                // 添加LIMIT限制
+                // 检查查询中是否已经包含limit
+                let has_limit = sql_lower.contains(" limit") || sql_lower.contains(".limit(");
+                
+                if has_limit {
+                    // 如果有limit，提取limit值并限制在1500以内
+                    if let Some(limit_index) = sql_lower.find(".limit(") {
+                        let after_limit = &sql[limit_index + 7..];
+                        
+                        // 查找limit后面的数字
+                        let mut limit_value = String::new();
+                        for c in after_limit.chars() {
+                            if c.is_ascii_digit() {
+                                limit_value.push(c);
+                            } else if c.is_whitespace() {
+                                continue;
+                            } else {
+                                break;
+                            }
                         }
+                        
+                        // 解析limit值
+                        let limit = limit_value.parse::<i64>().unwrap_or(200);
+                        // 限制在1500以内
+                        options.limit = Some(limit.min(1500));
+                    } else {
+                        // 默认限制
+                        options.limit = Some(200);
                     }
-                    
-                    // 解析limit值
-                    let limit = limit_value.parse::<i64>().unwrap_or(200);
-                    // 限制在1500以内
-                    options.limit = Some(limit.min(1500));
                 } else {
-                    // 默认限制
+                    // 没有limit，添加默认limit 200
                     options.limit = Some(200);
                 }
-            } else {
-                // 没有limit，添加默认limit 200
-                options.limit = Some(200);
-            }
-            
-            let cursor = collection.find(query, Some(options)).await
-                .map_err(|e| (
-                    StatusCode::BAD_REQUEST,
-                    Json(ModelErrorResponse {
-                        error: "query_error".to_string(),
-                        message: format!("MongoDB查询执行失败: {}", e),
-                        details: None,
-                    })
-                ))?;
-            
-            // 获取所有文档
-            let documents: Vec<mongodb::bson::Document> = cursor.try_collect().await
-                .map_err(|e| (
-                    StatusCode::BAD_REQUEST,
-                    Json(ModelErrorResponse {
-                        error: "query_error".to_string(),
-                        message: format!("MongoDB查询结果获取失败: {}", e),
-                        details: None,
-                    })
-                ))?;
-            
-            // 提取所有唯一列名 - 直接从文档中提取，因为MongoDB驱动已经根据投影参数过滤了字段
-            let mut all_columns = std::collections::HashSet::new();
-            for doc in &documents {
-                // 使用iter()方法获取键值对，这样可以更明确地获取键的类型
-                for (key, _) in doc.iter() {
-                    all_columns.insert(key.to_string());
+                
+                let cursor = collection.find(query, Some(options)).await
+                    .map_err(|e| (
+                        StatusCode::BAD_REQUEST,
+                        Json(ModelErrorResponse {
+                            error: "query_error".to_string(),
+                            message: format!("MongoDB查询执行失败: {}", e),
+                            details: None,
+                        })
+                    ))?;
+                
+                // 获取所有文档
+                let documents: Vec<mongodb::bson::Document> = cursor.try_collect().await
+                    .map_err(|e| (
+                        StatusCode::BAD_REQUEST,
+                        Json(ModelErrorResponse {
+                            error: "query_error".to_string(),
+                            message: format!("MongoDB查询结果获取失败: {}", e),
+                            details: None,
+                        })
+                    ))?;
+                
+                // 提取所有唯一列名 - 直接从文档中提取，因为MongoDB驱动已经根据投影参数过滤了字段
+                let mut all_columns = std::collections::HashSet::new();
+                for doc in &documents {
+                    // 使用iter()方法获取键值对，这样可以更明确地获取键的类型
+                    for (key, _) in doc.iter() {
+                        all_columns.insert(key.to_string());
+                    }
                 }
-            }
-            
-            // 转换为有序列名
-            let mut columns: Vec<String> = all_columns.into_iter().collect();
-            columns.sort();
-            
-            // 转换文档为行数据
-            let mut json_rows = Vec::new();
-            for doc in documents {
-                let mut row = Vec::new();
-                for col in &columns {
-                    let value = if let Some(v) = doc.get(col) {
-                        // 将BSON值转换为JSON
-                        serde_json::to_value(v).unwrap_or(serde_json::json!(null))
-                    } else {
-                        serde_json::json!(null)
-                    };
-                    row.push(value);
+                
+                // 转换为有序列名
+                let mut columns: Vec<String> = all_columns.into_iter().collect();
+                columns.sort();
+                
+                // 转换文档为行数据
+                let mut json_rows = Vec::new();
+                for doc in documents {
+                    let mut row = Vec::new();
+                    for col in &columns {
+                        let value = if let Some(v) = doc.get(col) {
+                            // 将BSON值转换为JSON
+                            serde_json::to_value(v).unwrap_or(serde_json::json!(null))
+                        } else {
+                            serde_json::json!(null)
+                        };
+                        row.push(value);
+                    }
+                    json_rows.push(row);
                 }
-                json_rows.push(row);
-            }
-            
-            let execution_time = start.elapsed();
-            let row_count = json_rows.len();
-            
-            SqlQueryResult {
-                columns,
-                rows: json_rows,
-                row_count,
-                execution_time_ms: execution_time.as_millis(),
-                total_rows: None,
-                page: None,
-                page_size: None,
-                has_more: false,
-                performance: None,
+                
+                let execution_time = start.elapsed();
+                let row_count = json_rows.len();
+                
+                SqlQueryResult {
+                    columns,
+                    rows: json_rows,
+                    row_count,
+                    execution_time_ms: execution_time.as_millis(),
+                    total_rows: None,
+                    page: None,
+                    page_size: None,
+                    has_more: false,
+                    performance: None,
+                }
             }
         }
     };
@@ -2361,7 +3002,7 @@ async fn get_execution_plan(
                     let params: Vec<&str> = split_params(params_str);
                     
                     // 第一个参数是查询条件
-                    if let Some(query_str) = params.get(0) {
+                    if let Some(query_str) = params.first() {
                         let trimmed = query_str.trim();
                         if !trimmed.is_empty() && trimmed != "{}" {
                             // 使用serde_json解析查询条件，然后转换为bson::Document

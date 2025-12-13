@@ -99,9 +99,14 @@
 
 {#if visible}
   <!-- 遮罩层 -->
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div
     class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
     on:click={handleBackdropClick}
+    role="dialog"
+    aria-modal="true"
+    tabindex="-1"
   >
     <!-- 对话框 -->
     <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md p-6">

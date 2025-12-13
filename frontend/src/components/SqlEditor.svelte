@@ -68,22 +68,132 @@
   let tableSchemas: Map<string, TableSchema> = new Map();
   let isLoadingSchema = false;
   
-  // SQL关键字和函数补全
-  const keywordCompletions = [
+  // 通用SQL关键字补全（所有SQL数据库共用）
+  const commonKeywordCompletions = [
     'SELECT', 'FROM', 'WHERE', 'ORDER BY', 'GROUP BY', 'HAVING',
-    'LIMIT', 'OFFSET', 'JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN',
+    'JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN', 'FULL JOIN',
     'INSERT', 'UPDATE', 'DELETE', 'CREATE TABLE', 'DROP TABLE', 'ALTER TABLE',
-    'UNION', 'UNION ALL', 'DISTINCT', 'AS', 'ON', 'USING'
+    'UNION', 'UNION ALL', 'DISTINCT', 'AS', 'ON', 'USING',
+    'AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN', 'IS NULL', 'IS NOT NULL',
+    'EXISTS', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END'
   ].map((label) => ({ label, type: 'keyword', apply: label }));
   
-  const functionCompletions = [
-    'COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'NOW', 'UPPER', 'LOWER',
-    'SUBSTRING', 'CONCAT', 'LENGTH', 'TRIM', 'ROUND', 'ABS', 'CEIL', 'FLOOR'
+  // 通用SQL函数补全（所有SQL数据库共用）
+  const commonFunctionCompletions = [
+    'COUNT', 'SUM', 'AVG', 'MIN', 'MAX',
+    'UPPER', 'LOWER', 'SUBSTRING', 'CONCAT', 'LENGTH', 'TRIM',
+    'ROUND', 'ABS', 'CEIL', 'FLOOR', 'MOD'
   ].map((fn) => ({
     label: fn,
     type: 'function',
     apply: `${fn}()`
   }));
+  
+  // MySQL特定关键字
+  const mysqlKeywordCompletions = [
+    'LIMIT', 'OFFSET', 'AUTO_INCREMENT', 'ENGINE', 'CHARSET',
+    'REPLACE', 'IGNORE', 'ON DUPLICATE KEY UPDATE',
+    'LOCK IN SHARE MODE', 'FOR UPDATE'
+  ].map((label) => ({ label, type: 'keyword', apply: label }));
+  
+  // MySQL特定函数
+  const mysqlFunctionCompletions = [
+    'NOW', 'CURDATE', 'CURTIME', 'DATE_FORMAT', 'STR_TO_DATE',
+    'IFNULL', 'COALESCE', 'IF', 'CAST', 'CONVERT',
+    'MD5', 'SHA1', 'SHA2', 'AES_ENCRYPT', 'AES_DECRYPT',
+    'GROUP_CONCAT', 'FIND_IN_SET', 'LOCATE', 'INSTR',
+    'DATE_ADD', 'DATE_SUB', 'DATEDIFF', 'TIMESTAMPDIFF',
+    'YEAR', 'MONTH', 'DAY', 'HOUR', 'MINUTE', 'SECOND'
+  ].map((fn) => ({
+    label: fn,
+    type: 'function',
+    apply: `${fn}()`
+  }));
+  
+  // PostgreSQL特定关键字
+  const postgresqlKeywordCompletions = [
+    'LIMIT', 'OFFSET', 'RETURNING', 'DISTINCT ON',
+    'ILIKE', 'SIMILAR TO', 'POSIX', 'REGEXP',
+    'INTERSECT', 'EXCEPT', 'WITH', 'RECURSIVE',
+    'PARTITION BY', 'OVER', 'WINDOW', 'RANGE', 'ROWS',
+    'SERIAL', 'BIGSERIAL', 'SMALLSERIAL', 'BOOLEAN',
+    'ARRAY', 'JSON', 'JSONB', 'HSTORE', 'UUID'
+  ].map((label) => ({ label, type: 'keyword', apply: label }));
+  
+  // PostgreSQL特定函数
+  const postgresqlFunctionCompletions = [
+    'NOW', 'CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME',
+    'EXTRACT', 'DATE_TRUNC', 'AGE', 'TO_CHAR', 'TO_TIMESTAMP',
+    'COALESCE', 'NULLIF', 'GREATEST', 'LEAST',
+    'ARRAY_AGG', 'STRING_AGG', 'JSON_AGG', 'JSONB_AGG',
+    'ROW_NUMBER', 'RANK', 'DENSE_RANK', 'LAG', 'LEAD',
+    'FIRST_VALUE', 'LAST_VALUE', 'PERCENT_RANK', 'CUME_DIST',
+    'REGEXP_REPLACE', 'REGEXP_MATCH', 'SPLIT_PART',
+    'ARRAY_LENGTH', 'ARRAY_UPPER', 'ARRAY_LOWER',
+    'JSON_EXTRACT_PATH', 'JSON_EXTRACT_PATH_TEXT', 'JSON_BUILD_OBJECT'
+  ].map((fn) => ({
+    label: fn,
+    type: 'function',
+    apply: `${fn}()`
+  }));
+  
+  // SQLite特定关键字
+  const sqliteKeywordCompletions = [
+    'LIMIT', 'OFFSET', 'REPLACE', 'INSERT OR IGNORE',
+    'INSERT OR REPLACE', 'INSERT OR ROLLBACK', 'INSERT OR ABORT',
+    'WITHOUT ROWID', 'STRICT', 'PRAGMA'
+  ].map((label) => ({ label, type: 'keyword', apply: label }));
+  
+  // SQLite特定函数
+  const sqliteFunctionCompletions = [
+    'datetime', 'date', 'time', 'strftime', 'julianday',
+    'changes', 'last_insert_rowid', 'random', 'randomblob',
+    'zeroblob', 'total_changes', 'typeof', 'length',
+    'abs', 'hex', 'lower', 'ltrim', 'rtrim', 'trim',
+    'upper', 'replace', 'substr', 'instr',
+    'printf', 'quote', 'group_concat',
+    'ifnull', 'nullif', 'coalesce'
+  ].map((fn) => ({
+    label: fn,
+    type: 'function',
+    apply: `${fn}()`
+  }));
+  
+  /**
+   * 根据数据库类型获取关键字补全列表
+   */
+  function getKeywordCompletions(dbType: string): any[] {
+    const common = commonKeywordCompletions;
+    switch (dbType.toLowerCase()) {
+      case 'mysql':
+        return [...common, ...mysqlKeywordCompletions];
+      case 'postgresql':
+      case 'postgres':
+        return [...common, ...postgresqlKeywordCompletions];
+      case 'sqlite':
+        return [...common, ...sqliteKeywordCompletions];
+      default:
+        return common;
+    }
+  }
+  
+  /**
+   * 根据数据库类型获取函数补全列表
+   */
+  function getFunctionCompletions(dbType: string): any[] {
+    const common = commonFunctionCompletions;
+    switch (dbType.toLowerCase()) {
+      case 'mysql':
+        return [...common, ...mysqlFunctionCompletions];
+      case 'postgresql':
+      case 'postgres':
+        return [...common, ...postgresqlFunctionCompletions];
+      case 'sqlite':
+        return [...common, ...sqliteFunctionCompletions];
+      default:
+        return common;
+    }
+  }
   
   // MongoDB关键字和函数补全
   const mongodbKeywordCompletions = [
@@ -300,16 +410,123 @@
     return { context: 'general' };
   }
   
+  /**
+   * 解析SQL中的表别名映射
+   */
+  function parseTableAliases(sql: string): Map<string, string> {
+    const aliases = new Map<string, string>();
+    
+    // 匹配 FROM table AS alias 或 FROM table alias
+    const fromPattern = /FROM\s+(\w+)(?:\s+AS\s+(\w+))?(?:\s+(\w+))?/gi;
+    let match;
+    while ((match = fromPattern.exec(sql)) !== null) {
+      const tableName = match[1];
+      const alias1 = match[2];
+      const alias2 = match[3];
+      if (alias1) {
+        aliases.set(alias1.toLowerCase(), tableName);
+      } else if (alias2 && !['JOIN', 'LEFT', 'RIGHT', 'INNER', 'ON'].includes(alias2.toUpperCase())) {
+        aliases.set(alias2.toLowerCase(), tableName);
+      }
+    }
+    
+    // 匹配 JOIN table AS alias
+    const joinPattern = /JOIN\s+(\w+)(?:\s+AS\s+(\w+))?(?:\s+(\w+))?/gi;
+    while ((match = joinPattern.exec(sql)) !== null) {
+      const tableName = match[1];
+      const alias1 = match[2];
+      const alias2 = match[3];
+      if (alias1) {
+        aliases.set(alias1.toLowerCase(), tableName);
+      } else if (alias2 && !['ON'].includes(alias2.toUpperCase())) {
+        aliases.set(alias2.toLowerCase(), tableName);
+      }
+    }
+    
+    return aliases;
+  }
+
+  /**
+   * 解析子查询中的字段
+   */
+  function parseSubqueryFields(sql: string): string[] {
+    const fields: string[] = [];
+    
+    // 查找所有子查询
+    const subqueryPattern = /\(SELECT\s+([^)]+)\s+FROM/gi;
+    let match;
+    const matches: RegExpMatchArray[] = [];
+    
+    while ((match = subqueryPattern.exec(sql)) !== null) {
+      matches.push(match);
+    }
+    
+    // 获取最近的子查询
+    if (matches.length > 0) {
+      const lastMatch = matches[matches.length - 1];
+      const selectClause = lastMatch[1];
+      // 提取字段名（简单处理，按逗号分割）
+      const fieldList = selectClause.split(',').map(f => {
+        const trimmed = f.trim();
+        // 处理 AS alias
+        const asMatch = trimmed.match(/\s+AS\s+(\w+)/i);
+        if (asMatch) {
+          return asMatch[1];
+        }
+        // 处理 table.field AS alias
+        const dotMatch = trimmed.match(/\.(\w+)(?:\s+AS\s+(\w+))?/i);
+        if (dotMatch) {
+          return dotMatch[2] || dotMatch[1];
+        }
+        return trimmed.split(/\s+/)[0];
+      });
+      fields.push(...fieldList);
+    }
+    
+    return fields;
+  }
+
+  /**
+   * 根据表名或别名获取表的字段
+   */
+  function getTableColumnsByTableOrAlias(tableOrAlias: string): string[] {
+    // 先检查是否是别名
+    const sql = editorView ? editorView.state.doc.toString() : '';
+    const aliases = parseTableAliases(sql);
+    
+    let actualTableName = tableOrAlias;
+    if (aliases.has(tableOrAlias.toLowerCase())) {
+      actualTableName = aliases.get(tableOrAlias.toLowerCase())!;
+    }
+    
+    return getTableColumns(actualTableName);
+  }
+
+  /**
+   * 模糊匹配表名
+   */
+  function fuzzyMatchTables(query: string): string[] {
+    if (!query) return databaseTables;
+    
+    const lowerQuery = query.toLowerCase();
+    return databaseTables.filter(table => 
+      table.toLowerCase().includes(lowerQuery) ||
+      lowerQuery.includes(table.toLowerCase())
+    );
+  }
+
   // 智能自动补全源
   const completionSource = (context: any) => {
-    const word = context.matchBefore(/[\w.]*/);
+    // 支持更复杂的匹配模式：table.xxx 或 alias.xxx
+    const word = context.matchBefore(/[\w.]+/);
     if (!word || (word.from === word.to && !context.explicit)) {
       return null;
     }
     
     const sql = context.state.doc.toString();
     const position = word.from;
-    const query = word.text.toLowerCase();
+    const query = word.text;
+    const lowerQuery = query.toLowerCase();
     
     let options: any[] = [];
     
@@ -370,8 +587,85 @@
       
       options.push(...mongodbTemplates);
     } else {
-      // SQL补全逻辑
+      // SQL补全逻辑（支持MySQL、PostgreSQL、SQLite）
       const sqlContext = analyzeSqlContext(sql, position);
+      
+      // 根据数据库类型获取关键字和函数补全
+      const keywordCompletions = getKeywordCompletions(currentDatabaseType);
+      const functionCompletions = getFunctionCompletions(currentDatabaseType);
+      
+      // 检测是否是 table.xxx 格式
+      if (query.includes('.')) {
+        const parts = query.split('.');
+        const tableOrAlias = parts[0];
+        const fieldPrefix = parts.length > 1 ? parts[1] : '';
+        
+        // 获取该表的字段
+        const columns = getTableColumnsByTableOrAlias(tableOrAlias);
+        
+        // 如果字段前缀存在，进行过滤
+        const filteredColumns = fieldPrefix 
+          ? columns.filter(col => col.toLowerCase().startsWith(fieldPrefix.toLowerCase()))
+          : columns;
+        
+        options.push(...filteredColumns.map(col => ({
+          label: col,
+          type: 'variable',
+          detail: `${tableOrAlias}.${col}`,
+          apply: `${tableOrAlias}.${col}`
+        })));
+        
+        // 也检查子查询字段
+        const subqueryFields = parseSubqueryFields(sql);
+        if (subqueryFields.length > 0) {
+          const filteredSubFields = fieldPrefix
+            ? subqueryFields.filter(f => f.toLowerCase().startsWith(fieldPrefix.toLowerCase()))
+            : subqueryFields;
+          
+          options.push(...filteredSubFields.map(field => ({
+            label: field,
+            type: 'variable',
+            detail: `子查询字段: ${field}`,
+            apply: `${tableOrAlias}.${field}`
+          })));
+        }
+        
+        return {
+          from: word.from,
+          options: options.slice(0, 50) // 限制选项数量
+        };
+      }
+      
+      // 检测是否在输入表名（在FROM/JOIN后面，或者单独输入）
+      const isTableContext = sqlContext.context === 'from' || 
+                            sqlContext.context === 'join' ||
+                            (sqlContext.context === 'general' && lowerQuery.length > 0);
+      
+      if (isTableContext) {
+        // 模糊匹配表名
+        const matchedTables = fuzzyMatchTables(query);
+        options.push(...matchedTables.map(table => ({
+          label: table,
+          type: 'variable',
+          detail: `表: ${table}`,
+          apply: table
+        })));
+        
+        // 如果匹配到表，也显示其字段（table.格式）
+        if (matchedTables.length > 0 && matchedTables.length <= 5) {
+          matchedTables.forEach(table => {
+            const columns = getTableColumns(table);
+            columns.slice(0, 5).forEach(col => {
+              options.push({
+                label: `${table}.${col}`,
+                type: 'variable',
+                detail: `${table} 表的字段`,
+                apply: `${table}.${col}`
+              });
+            });
+          });
+        }
+      }
       
       // 根据上下文提供不同的补全选项
       switch (sqlContext.context) {
@@ -379,7 +673,10 @@
           // SELECT后面：提示字段名、函数、关键字
           if (sqlContext.currentTable) {
             const columns = getTableColumns(sqlContext.currentTable);
-            options.push(...columns.map(col => ({
+            const filtered = lowerQuery 
+              ? columns.filter(col => col.toLowerCase().startsWith(lowerQuery))
+              : columns;
+            options.push(...filtered.map(col => ({
               label: col,
               type: 'variable',
               apply: col
@@ -388,26 +685,51 @@
             // 如果没有表名，提示所有表的字段（如果已加载）
             tableSchemas.forEach((schema, tableName) => {
               schema.columns.forEach(col => {
-                options.push({
-                  label: `${tableName}.${col.name}`,
-                  type: 'variable',
-                  apply: `${tableName}.${col.name}`
-                });
+                if (!lowerQuery || col.name.toLowerCase().startsWith(lowerQuery) || 
+                    tableName.toLowerCase().startsWith(lowerQuery)) {
+                  options.push({
+                    label: `${tableName}.${col.name}`,
+                    type: 'variable',
+                    detail: `${tableName} 表的字段`,
+                    apply: `${tableName}.${col.name}`
+                  });
+                }
               });
             });
           }
-          options.push(...functionCompletions);
-          options.push(...keywordCompletions);
+          
+          // 检查子查询字段
+          const subqueryFields = parseSubqueryFields(sql);
+          if (subqueryFields.length > 0) {
+            const filtered = lowerQuery
+              ? subqueryFields.filter(f => f.toLowerCase().startsWith(lowerQuery))
+              : subqueryFields;
+            options.push(...filtered.map(field => ({
+              label: field,
+              type: 'variable',
+              detail: '子查询字段',
+              apply: field
+            })));
+          }
+          
+          options.push(...functionCompletions.filter(f => 
+            !lowerQuery || f.label.toLowerCase().startsWith(lowerQuery)
+          ));
+          options.push(...keywordCompletions.filter(k => 
+            !lowerQuery || k.label.toLowerCase().startsWith(lowerQuery)
+          ));
           break;
           
         case 'from':
         case 'join':
-          // FROM/JOIN后面：提示表名
-          options.push(...databaseTables.map(table => ({
-            label: table,
-            type: 'variable',
-            apply: table
-          })));
+          // FROM/JOIN后面：提示表名（已在上面的isTableContext中处理）
+          if (!isTableContext) {
+            options.push(...databaseTables.map(table => ({
+              label: table,
+              type: 'variable',
+              apply: table
+            })));
+          }
           options.push(...keywordCompletions.filter(k => 
             ['JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN'].includes(k.label)
           ));
@@ -419,28 +741,77 @@
           // WHERE/ORDER BY/GROUP BY后面：提示字段名
           if (sqlContext.currentTable) {
             const columns = getTableColumns(sqlContext.currentTable);
-            options.push(...columns.map(col => ({
+            const filtered = lowerQuery
+              ? columns.filter(col => col.toLowerCase().startsWith(lowerQuery))
+              : columns;
+            options.push(...filtered.map(col => ({
               label: col,
               type: 'variable',
               apply: col
             })));
+          } else {
+            // 提示所有表的字段（table.格式）
+            tableSchemas.forEach((schema, tableName) => {
+              schema.columns.forEach(col => {
+                if (!lowerQuery || col.name.toLowerCase().startsWith(lowerQuery)) {
+                  options.push({
+                    label: `${tableName}.${col.name}`,
+                    type: 'variable',
+                    detail: `${tableName} 表的字段`,
+                    apply: `${tableName}.${col.name}`
+                  });
+                }
+              });
+            });
           }
-          options.push(...functionCompletions);
+          
+          // 检查子查询字段
+          const subqueryFields2 = parseSubqueryFields(sql);
+          if (subqueryFields2.length > 0) {
+            options.push(...subqueryFields2.map(field => ({
+              label: field,
+              type: 'variable',
+              detail: '子查询字段',
+              apply: field
+            })));
+          }
+          
+          options.push(...functionCompletions.filter(f => 
+            !lowerQuery || f.label.toLowerCase().startsWith(lowerQuery)
+          ));
           options.push(...keywordCompletions.filter(k => 
-            ['AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN'].includes(k.label)
+            ['AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN'].includes(k.label) ||
+            (!lowerQuery || k.label.toLowerCase().startsWith(lowerQuery))
           ));
           break;
           
         default:
           // 默认：提示所有选项
-          options.push(...keywordCompletions);
-          options.push(...functionCompletions);
-          if (databaseTables.length > 0) {
-            options.push(...databaseTables.map(table => ({
+          if (lowerQuery) {
+            // 模糊匹配
+            options.push(...keywordCompletions.filter(k => 
+              k.label.toLowerCase().includes(lowerQuery)
+            ));
+            options.push(...functionCompletions.filter(f => 
+              f.label.toLowerCase().includes(lowerQuery)
+            ));
+            const matchedTables = fuzzyMatchTables(query);
+            options.push(...matchedTables.map(table => ({
               label: table,
               type: 'variable',
+              detail: `表: ${table}`,
               apply: table
             })));
+          } else {
+            options.push(...keywordCompletions);
+            options.push(...functionCompletions);
+            if (databaseTables.length > 0) {
+              options.push(...databaseTables.map(table => ({
+                label: table,
+                type: 'variable',
+                apply: table
+              })));
+            }
           }
       }
     
@@ -448,8 +819,8 @@
   
   // 添加SQL片段快捷输入（在所有上下文中都可用）
   const matchingSnippets = sqlSnippets.filter(snippet => 
-    snippet.label.toLowerCase().startsWith(query) || 
-    snippet.description.toLowerCase().includes(query)
+    snippet.label.toLowerCase().startsWith(lowerQuery) || 
+    snippet.description.toLowerCase().includes(lowerQuery)
   );
   
   if (matchingSnippets.length > 0) {
@@ -486,15 +857,21 @@
     })));
   }
   
-  // 过滤匹配的选项
-  const filteredOptions = options.filter(opt => 
-    opt.label.toLowerCase().includes(query) ||
-    (opt.detail && opt.detail.toLowerCase().includes(query))
-  );
+  // 过滤匹配的选项（如果用户有输入）
+  let filteredOptions = options;
+  if (lowerQuery && lowerQuery.length > 0) {
+    filteredOptions = options.filter(opt => 
+      opt.label.toLowerCase().includes(lowerQuery) ||
+      (opt.detail && opt.detail.toLowerCase().includes(lowerQuery))
+    );
+  }
+  
+  // 限制选项数量，避免性能问题
+  const limitedOptions = filteredOptions.slice(0, 100);
   
   return {
     from: word.from,
-    options: filteredOptions.length > 0 ? filteredOptions : options,
+    options: limitedOptions.length > 0 ? limitedOptions : options.slice(0, 50),
     validFor: /^[\w.]*$/
   };
 };

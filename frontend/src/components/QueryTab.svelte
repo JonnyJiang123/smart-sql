@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import SqlEditor from './SqlEditor.svelte';
   import QueryResults from './QueryResults.svelte';
   import ExecutionPlanViewer from './ExecutionPlan.svelte';
@@ -46,6 +47,20 @@
 
   // 多条SQL执行结果
   let multiSqlResult: MultiSqlExecutionResult | null = null;
+
+  // 监听apply-sql事件（从SQL收藏夹应用SQL）
+  onMount(() => {
+    const handleApplySql = (event: CustomEvent) => {
+      if (event.detail.tabId === tab.id && event.detail.sql) {
+        // 更新tab中的SQL
+        tabStore.updateTabSql(tab.id, event.detail.sql);
+      }
+    };
+    window.addEventListener('apply-sql', handleApplySql as EventListener);
+    return () => {
+      window.removeEventListener('apply-sql', handleApplySql as EventListener);
+    };
+  });
 
   // 执行查询
   async function executeQuery(sql: string) {
@@ -380,6 +395,7 @@
             isLoading={false}
             errorMessage={activeResultTab.error || ''}
             sql={activeResultTab.sql || tab.sql}
+            connectionId={tab.selectedConnectionId}
           />
         {:else}
           <QueryResults
@@ -387,6 +403,7 @@
             isLoading={isExecuting}
             {errorMessage}
             sql={tab.sql}
+            connectionId={tab.selectedConnectionId}
           />
         {/if}
       </div>

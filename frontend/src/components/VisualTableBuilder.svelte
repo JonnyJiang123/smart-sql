@@ -225,25 +225,46 @@
     successMessage = '';
     onClose();
   }
+
+  function handleBackdropClick(event: MouseEvent) {
+    if (event.target === event.currentTarget) {
+      close();
+    }
+  }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && visible) {
+      close();
+    }
+  }
 </script>
+
+<svelte:window on:keydown={handleKeydown} />
 
 {#if visible}
   <!-- 背景遮罩 -->
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div
     class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-    on:click={close}
+    on:click={handleBackdropClick}
     role="dialog"
     aria-modal="true"
+    aria-labelledby="visual-table-builder-title"
+    tabindex="-1"
   >
     <!-- 对话框容器 -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div
       class="bg-white dark:bg-gray-800 rounded-lg shadow-2xl w-full max-h-[90vh] overflow-auto flex flex-col"
-      on:click|stopPropagation
+      on:click|stopPropagation={() => {}}
+      role="document"
       style="max-width: 1000px"
+      tabindex="-1"
     >
       <!-- 标题栏 -->
       <div class="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex items-center justify-between">
-        <h2 class="text-xl font-bold text-gray-900 dark:text-white">📊 可视化建表</h2>
+        <h2 id="visual-table-builder-title" class="text-xl font-bold text-gray-900 dark:text-white">📊 可视化建表</h2>
         <button
           on:click={close}
           class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
@@ -262,10 +283,11 @@
           <h3 class="text-sm font-semibold text-gray-900 dark:text-white">📋 表信息</h3>
           <div class="space-y-3">
             <div>
-              <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
+              <label for="tableNameInput" class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
                 表名 <span class="text-red-500">*</span>
               </label>
               <input
+                id="tableNameInput"
                 type="text"
                 bind:value={tableName}
                 placeholder="例如: users, products"
@@ -277,10 +299,11 @@
             </div>
 
             <div>
-              <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
+              <label for="tableCommentInput" class="block text-sm text-gray-700 dark:text-gray-300 mb-2">
                 表描述（可选）
               </label>
               <textarea
+                id="tableCommentInput"
                 bind:value={tableComment}
                 placeholder="例如: 用户信息表"
                 rows={2}
@@ -374,8 +397,9 @@
             <div class="grid grid-cols-2 gap-4">
               <!-- 列名 -->
               <div>
-                <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">列名</label>
+                <label for="columnNameInput-{selectedColumnIndex}" class="block text-sm text-gray-700 dark:text-gray-300 mb-2">列名</label>
                 <input
+                  id="columnNameInput-{selectedColumnIndex}"
                   type="text"
                   value={columns[selectedColumnIndex].name}
                   on:change={(e) => handleInputChange(selectedColumnIndex, 'name', e)}
@@ -385,8 +409,9 @@
 
               <!-- 数据类型 -->
               <div>
-                <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">数据类型</label>
+                <label for="columnTypeSelect-{selectedColumnIndex}" class="block text-sm text-gray-700 dark:text-gray-300 mb-2">数据类型</label>
                 <select
+                  id="columnTypeSelect-{selectedColumnIndex}"
                   value={columns[selectedColumnIndex].type}
                   on:change={(e) => handleSelectChange(selectedColumnIndex, 'type', e)}
                   class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -402,8 +427,9 @@
 
               <!-- 默认值 -->
               <div>
-                <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">默认值（可选）</label>
+                <label for="columnDefaultInput-{selectedColumnIndex}" class="block text-sm text-gray-700 dark:text-gray-300 mb-2">默认值（可选）</label>
                 <input
+                  id="columnDefaultInput-{selectedColumnIndex}"
                   type="text"
                   value={columns[selectedColumnIndex].default || ''}
                   on:change={(e) => handleInputChange(selectedColumnIndex, 'default', e)}
@@ -414,8 +440,9 @@
 
               <!-- 注释 -->
               <div>
-                <label class="block text-sm text-gray-700 dark:text-gray-300 mb-2">注释（可选）</label>
+                <label for="columnCommentInput-{selectedColumnIndex}" class="block text-sm text-gray-700 dark:text-gray-300 mb-2">注释（可选）</label>
                 <input
+                  id="columnCommentInput-{selectedColumnIndex}"
                   type="text"
                   value={columns[selectedColumnIndex].comment || ''}
                   on:change={(e) => handleInputChange(selectedColumnIndex, 'comment', e)}

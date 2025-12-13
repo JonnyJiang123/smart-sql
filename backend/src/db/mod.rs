@@ -94,11 +94,28 @@ impl DatabaseManager {
                 let client = Client::with_uri_str(database_url).await?;
                 
                 // 从连接字符串提取数据库名称
+                // MongoDB连接字符串格式: mongodb://[username:password@]host[:port][/database][?options]
                 let db_name = if let Some(db_part) = database_url.split('/').nth(3) {
-                    db_part.split('?').next().unwrap_or("admin").to_string()
+                    let db = db_part.split('?').next().unwrap_or("admin").trim();
+                    if db.is_empty() {
+                        "admin".to_string()
+                    } else {
+                        // 验证数据库名有效性（MongoDB数据库名不能包含: /\. "$*<>:|?等字符）
+                        let invalid_chars = [':', '/', '\\', '.', ' ', '"', '*', '<', '>', '|', '?'];
+                        if db.chars().any(|c| invalid_chars.contains(&c)) {
+                            log::warn!("[MongoDB] 数据库名包含无效字符，将使用'admin': '{}'", db);
+                            "admin".to_string()
+                        } else {
+                            db.to_string()
+                        }
+                    }
                 } else {
                     "admin".to_string()
                 };
+                
+                log::info!("[MongoDB] 从连接字符串提取数据库名: '{}' (连接字符串: {}...)", 
+                          db_name, 
+                          database_url.chars().take(50).collect::<String>());
                 
                 DatabasePool::MongoDB(client, db_name)
             }
@@ -245,6 +262,20 @@ impl DatabaseManager {
                 Ok(result)
             },
             DatabasePool::SQLite(pool) => {
+                // 先检查表是否存在
+                let table_exists: bool = sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)"
+                )
+                .bind(table_name)
+                .fetch_one(pool)
+                .await?;
+                
+                if !table_exists {
+                    return Err(DatabaseError::ConnectionFailed(
+                        sqlx::Error::RowNotFound
+                    ));
+                }
+                
                 // 查询SQLite索引信息
                 let indexes = sqlx::query_as::<_, (i32, String, i32)>(
                     &format!("PRAGMA index_list('{}')", table_name)
@@ -291,6 +322,124 @@ impl DatabaseManager {
                 }
                 
                 Ok(index_list)
+            }
+        }
+    }
+    
+    // 获取指定表的外键信息
+    pub async fn get_foreign_keys(&self, table_name: &str) -> Result<Vec<crate::models::ForeignKeyInfo>, DatabaseError> {
+        // 根据不同数据库类型执行不同的查询
+        match &self.pool {
+            DatabasePool::PostgreSQL(pool) => {
+                // 查询PostgreSQL外键信息
+                let fks = sqlx::query_as::<_, (String, String, String, String)>(
+                    r#"
+                    SELECT 
+                        tc.constraint_name,
+                        kcu.column_name,
+                        ccu.table_name AS referenced_table,
+                        ccu.column_name AS referenced_column
+                    FROM 
+                        information_schema.table_constraints AS tc
+                    JOIN 
+                        information_schema.key_column_usage AS kcu
+                        ON tc.constraint_name = kcu.constraint_name
+                    JOIN 
+                        information_schema.constraint_column_usage AS ccu
+                        ON ccu.constraint_name = tc.constraint_name
+                    WHERE 
+                        tc.constraint_type = 'FOREIGN KEY'
+                        AND tc.table_name = $1
+                    "#
+                )
+                .bind(table_name)
+                .fetch_all(pool)
+                .await?;
+                
+                let result: Vec<crate::models::ForeignKeyInfo> = fks
+                    .into_iter()
+                    .map(|(constraint_name, column_name, referenced_table, referenced_column)| {
+                        crate::models::ForeignKeyInfo {
+                            constraint_name,
+                            column_name,
+                            referenced_table,
+                            referenced_column,
+                        }
+                    })
+                    .collect();
+                
+                Ok(result)
+            },
+            DatabasePool::MySQL(pool) => {
+                // 查询MySQL外键信息
+                let fks = sqlx::query_as::<_, (String, String, String, String)>(
+                    r#"
+                    SELECT 
+                        CONSTRAINT_NAME,
+                        COLUMN_NAME,
+                        REFERENCED_TABLE_NAME,
+                        REFERENCED_COLUMN_NAME
+                    FROM 
+                        INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+                    WHERE 
+                        TABLE_SCHEMA = DATABASE()
+                        AND TABLE_NAME = ?
+                        AND REFERENCED_TABLE_NAME IS NOT NULL
+                    "#
+                )
+                .bind(table_name)
+                .fetch_all(pool)
+                .await?;
+                
+                let result: Vec<crate::models::ForeignKeyInfo> = fks
+                    .into_iter()
+                    .map(|(constraint_name, column_name, referenced_table, referenced_column)| {
+                        crate::models::ForeignKeyInfo {
+                            constraint_name,
+                            column_name,
+                            referenced_table,
+                            referenced_column,
+                        }
+                    })
+                    .collect();
+                
+                Ok(result)
+            },
+            DatabasePool::SQLite(pool) => {
+                // 查询SQLite外键信息
+                #[derive(sqlx::FromRow)]
+                struct SqliteForeignKey {
+                    #[allow(dead_code)]
+                    id: i32,
+                    #[allow(dead_code)]
+                    seq: i32,
+                    table: String,
+                    from: String,
+                    to: String,
+                }
+                
+                let fk_query = format!("PRAGMA foreign_key_list('{}')", table_name);
+                let sqlite_fks = sqlx::query_as::<_, SqliteForeignKey>(&fk_query)
+                    .fetch_all(pool)
+                    .await?;
+                
+                let result: Vec<crate::models::ForeignKeyInfo> = sqlite_fks
+                    .into_iter()
+                    .map(|fk| {
+                        crate::models::ForeignKeyInfo {
+                            constraint_name: format!("fk_{}_{}_{}", table_name, fk.from, fk.table),
+                            column_name: fk.from,
+                            referenced_table: fk.table,
+                            referenced_column: fk.to,
+                        }
+                    })
+                    .collect();
+                
+                Ok(result)
+            },
+            DatabasePool::MongoDB(_, _) => {
+                // MongoDB不支持外键约束
+                Ok(Vec::new())
             }
         }
     }

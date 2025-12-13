@@ -1,0 +1,11 @@
+﻿cargo :     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.80s
+所在位置 C:\Users\Administrator\AppData\Local\Temp\ps-script-90ca8060-6765-453c-bdaa-0a7458c25463.ps1:89 字符: 44
++ cd F:\vscodeProjects\ai\smart-sql\backend; cargo check 2>&1 | Out-Fil ...
++                                            ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Finished `d...get(s) in 0.80s:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+warning: the following packages contain code that will be rejected by a future version of Rust: net2 v0.2.39, sqlx-post
+gres v0.7.4
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibi
+lities --id 1`

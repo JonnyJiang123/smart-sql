@@ -1,17 +1,24 @@
 <script lang="ts">
   import type { TableColumn } from '../types';
+  import { bulkInsertData } from '../services/api';
+  import { appStore } from '../stores/appStore';
+  import { createEventDispatcher } from 'svelte';
   
   interface RowData {
     [key: string]: string | number | boolean | null;
   }
 
+  const dispatch = createEventDispatcher();
+
   export let visible = false;
   export let tableName = '';
   export let columns: TableColumn[] = [];
   export let onClose = () => {};
-  export let onInsert = async () => {};
 
-  let step: 'import' | 'preview' | 'confirm' = 'import';
+  // 从store获取当前连接ID
+  $: connectionId = $appStore.selectedConnectionId;
+
+  let step: 'import' | 'preview' | 'confirm' | 'result' = 'import';
   let importMethod: 'paste' | 'file' = 'paste';
   let pastedData = '';
   let importedRows: RowData[] = [];
@@ -19,6 +26,14 @@
   let loading = false;
   let error: string | null = null;
   let successMessage: string | null = null;
+  
+  // 插入进度和结果
+  let insertProgress = 0;
+  let insertResult: {
+    inserted: number;
+    failed: number;
+    errors?: string[];
+  } | null = null;
 
   const dataFormats = {
     csv: 'CSV (逗号分隔)',
@@ -180,27 +195,84 @@
       return;
     }
 
+    // 检查行数限制
+    if (importedRows.length > 10000) {
+      error = '单次批量插入最多支持 10000 行数据';
+      return;
+    }
+
     loading = true;
     error = null;
     successMessage = null;
+    insertProgress = 0;
+    insertResult = null;
+    step = 'result';
 
     try {
-      await onInsert();
-      
-      successMessage = `成功插入 ${importedRows.length} 条记录`;
-      
-      // 重置表单
-      setTimeout(() => {
-        pastedData = '';
-        importedRows = [];
-        step = 'import';
-        onClose();
-      }, 1500);
+      // 模拟进度更新
+      const progressInterval = setInterval(() => {
+        if (insertProgress < 90) {
+          insertProgress += 10;
+        }
+      }, 100);
+
+      // 调用API
+      const result = await bulkInsertData({
+        table_name: tableName,
+        rows: importedRows,
+        connection_id: connectionId || undefined,
+      });
+
+      clearInterval(progressInterval);
+      insertProgress = 100;
+
+      insertResult = {
+        inserted: result.inserted,
+        failed: result.failed,
+        errors: result.errors,
+      };
+
+      if (result.success) {
+        successMessage = result.message;
+        dispatch('inserted', {
+          inserted: result.inserted,
+          failed: result.failed,
+        });
+        
+        // 成功后在3秒后关闭
+        setTimeout(() => {
+          resetAndClose();
+        }, 3000);
+      } else {
+        error = result.message;
+        if (result.errors && result.errors.length > 0) {
+          error += '\n' + result.errors.slice(0, 10).join('\n');
+          if (result.errors.length > 10) {
+            error += `\n... 及其他 ${result.errors.length - 10} 个错误`;
+          }
+        }
+      }
     } catch (err) {
+      insertProgress = 0;
       error = `插入失败: ${err instanceof Error ? err.message : String(err)}`;
     } finally {
       loading = false;
     }
+  }
+
+  /**
+   * 重置表单并关闭
+   */
+  function resetAndClose() {
+    pastedData = '';
+    importedRows = [];
+    selectedFile = null;
+    step = 'import';
+    insertProgress = 0;
+    insertResult = null;
+    error = null;
+    successMessage = null;
+    onClose();
   }
 
   function goToPreview() {
@@ -385,14 +457,6 @@
               <p class="warning">⚠️ 此操作不可撤销，请确认数据无误</p>
             </div>
 
-            {#if successMessage}
-              <div class="success-message">{successMessage}</div>
-            {/if}
-
-            {#if error}
-              <div class="error-message">{error}</div>
-            {/if}
-
             <div class="button-group">
               <button class="btn-cancel" on:click={goBack} disabled={loading}>
                 上一步
@@ -402,7 +466,54 @@
                 on:click={executeInsert}
                 disabled={loading}
               >
-                {loading ? '插入中...' : '确认插入'}
+                确认插入
+              </button>
+            </div>
+          </div>
+        {/if}
+
+        <!-- 步骤4: 插入结果 -->
+        {#if step === 'result'}
+          <div class="result-section">
+            <div class="result-header">
+              <h3>插入进度</h3>
+            </div>
+
+            {#if loading}
+              <div class="progress-container">
+                <div class="progress-bar">
+                  <div class="progress-fill" style="width: {insertProgress}%"></div>
+                </div>
+                <p class="progress-text">正在插入数据... {insertProgress}%</p>
+              </div>
+            {/if}
+
+            {#if insertResult}
+              <div class="result-summary">
+                <div class="result-item success">
+                  <span class="result-label">成功插入:</span>
+                  <span class="result-value">{insertResult.inserted} 条</span>
+                </div>
+                {#if insertResult.failed > 0}
+                  <div class="result-item failed">
+                    <span class="result-label">失败:</span>
+                    <span class="result-value">{insertResult.failed} 条</span>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+
+            {#if successMessage}
+              <div class="success-message">{successMessage}</div>
+            {/if}
+
+            {#if error}
+              <div class="error-message">{error}</div>
+            {/if}
+
+            <div class="button-group">
+              <button class="btn-primary" on:click={resetAndClose} disabled={loading}>
+                {loading ? '插入中...' : '完成'}
               </button>
             </div>
           </div>
@@ -796,6 +907,81 @@
     font-weight: 500;
   }
 
+  .result-section {
+    padding: 20px 0;
+  }
+
+  .result-header {
+    margin-bottom: 20px;
+  }
+
+  .result-header h3 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  .progress-container {
+    margin-bottom: 24px;
+  }
+
+  .progress-bar {
+    width: 100%;
+    height: 24px;
+    background: #e5e7eb;
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #10b981);
+    transition: width 0.3s ease;
+    border-radius: 12px;
+  }
+
+  .progress-text {
+    text-align: center;
+    font-size: 14px;
+    color: #6b7280;
+    margin: 0;
+  }
+
+  .result-summary {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 20px;
+    padding: 16px;
+    background: #f9fafb;
+    border-radius: 8px;
+  }
+
+  .result-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .result-label {
+    font-size: 12px;
+    color: #6b7280;
+    font-weight: 500;
+  }
+
+  .result-value {
+    font-size: 20px;
+    font-weight: 600;
+  }
+
+  .result-item.success .result-value {
+    color: #10b981;
+  }
+
+  .result-item.failed .result-value {
+    color: #ef4444;
+  }
+
   /* 暗黑模式 */
   :global(.dark) .dialog-container {
     background: #1f2937;
@@ -922,5 +1108,34 @@
 
   :global(.dark) .confirm-info p {
     color: #fef3c7;
+  }
+
+  :global(.dark) .result-header h3 {
+    color: #f3f4f6;
+  }
+
+  :global(.dark) .progress-bar {
+    background: #374151;
+  }
+
+  :global(.dark) .progress-text {
+    color: #d1d5db;
+  }
+
+  :global(.dark) .result-summary {
+    background: #1f2937;
+    border: 1px solid #374151;
+  }
+
+  :global(.dark) .result-label {
+    color: #9ca3af;
+  }
+
+  :global(.dark) .result-item.success .result-value {
+    color: #10b981;
+  }
+
+  :global(.dark) .result-item.failed .result-value {
+    color: #f87171;
   }
 </style>

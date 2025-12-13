@@ -93,6 +93,7 @@
   on:focus={handleMouseEnter}
   on:blur={handleMouseLeave}
   class="tooltip-container inline-block"
+  role="tooltip"
 >
   <slot />
 </div>

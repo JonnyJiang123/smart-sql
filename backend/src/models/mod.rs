@@ -257,6 +257,61 @@ pub struct SqlOptimizeResponse {
     pub execution_time: u64,
 }
 
+// SQL转自然语言请求
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SqlToNaturalLanguageRequest {
+    pub sql: String,
+    pub database_type: Option<String>,
+}
+
+// SQL转自然语言响应
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SqlToNaturalLanguageResponse {
+    pub success: bool,
+    pub natural_language: Option<String>,
+    pub error: Option<String>,
+}
+
+// SQL智能补全请求
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SqlCompletionRequest {
+    pub partial_sql: String,
+    pub database_schema: Option<String>,
+    pub database_type: Option<String>,
+}
+
+// SQL智能补全响应
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SqlCompletionResponse {
+    pub success: bool,
+    pub suggestions: Option<Vec<String>>,
+    pub error: Option<String>,
+}
+
+// 对话式AI分析请求
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ChatAnalysisRequest {
+    pub query: String,
+    pub conversation_history: Option<Vec<ChatMessage>>,
+    pub database_schema: Option<String>,
+    pub database_type: Option<String>,
+}
+
+// 对话消息
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChatMessage {
+    pub role: String,  // "user" | "assistant" | "system"
+    pub content: String,
+}
+
+// 对话式AI分析响应
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ChatAnalysisResponse {
+    pub success: bool,
+    pub response: Option<String>,
+    pub error: Option<String>,
+}
+
 // SQL解释请求模型
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SqlExplainRequest {

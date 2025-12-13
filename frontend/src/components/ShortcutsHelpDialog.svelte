@@ -27,6 +27,8 @@
 
 {#if visible}
   <!-- 遮罩层 -->
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div
     class="fixed inset-0 z-50 bg-black/50 dark:bg-black/70 flex items-center justify-center p-4"
     on:click={handleBackdropClick}
@@ -34,6 +36,7 @@
     role="dialog"
     aria-modal="true"
     aria-labelledby="shortcuts-title"
+    tabindex="-1"
   >
     <!-- 对话框 -->
     <div class="bg-white dark:bg-gray-800 rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">

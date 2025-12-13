@@ -12,7 +12,13 @@ import type {
   ConnectionTestResponse,
   TableSchema,
   ExecutionPlan,
-  MultiSqlExecutionResult
+  MultiSqlExecutionResult,
+  BulkInsertRequest,
+  BulkInsertResponse,
+  BulkUpdateRequest,
+  BulkUpdateResponse,
+  BulkDeleteRequest,
+  BulkDeleteResponse
 } from '../types';
 
 // API基础URL
@@ -341,4 +347,45 @@ export async function createTable(request: {
     method: 'POST',
     body: JSON.stringify(request),
   });
+}
+
+// ==================== 批量数据操作 API ====================
+
+// 批量插入数据
+export async function bulkInsertData(
+  request: BulkInsertRequest
+): Promise<BulkInsertResponse> {
+  console.log('[API] bulkInsertData 请求:', request);
+  const result = await fetchApi<BulkInsertResponse>('/database/data/bulk-insert', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+  console.log('[API] bulkInsertData 响应:', result);
+  return result;
+}
+
+// 批量更新数据
+export async function bulkUpdateData(
+  request: BulkUpdateRequest
+): Promise<BulkUpdateResponse> {
+  console.log('[API] bulkUpdateData 请求:', request);
+  const result = await fetchApi<BulkUpdateResponse>('/database/data/bulk-update', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+  console.log('[API] bulkUpdateData 响应:', result);
+  return result;
+}
+
+// 批量删除数据
+export async function bulkDeleteData(
+  request: BulkDeleteRequest
+): Promise<BulkDeleteResponse> {
+  console.log('[API] bulkDeleteData 请求:', request);
+  const result = await fetchApi<BulkDeleteResponse>('/database/data/bulk-delete', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+  console.log('[API] bulkDeleteData 响应:', result);
+  return result;
 }

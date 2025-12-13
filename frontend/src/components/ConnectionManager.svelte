@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, createEventDispatcher } from 'svelte';
-  import type { DatabaseConnection, ConnectionRequest, ConnectionTestResponse } from '../types';
+  import type { DatabaseConnection, ConnectionRequest, ConnectionTestRequest, ConnectionTestResponse } from '../types';
   import { listConnections, createConnection, updateConnection, deleteConnection, testConnection, toggleConnectionActive } from '../services/api';
   import { appStore } from '../stores/appStore';
 
@@ -14,6 +14,12 @@
   let currentConnectionId: number | null = null;
 
   let testStatus: ConnectionTestResponse | null = null;
+  
+  // 连接方式：'form' | 'url'
+  let connectionMode: 'form' | 'url' = 'form';
+  
+  // 是否显示高级配置
+  let showAdvancedOptions = false;
 
   // 使用响应式语法获取连接列表
   $: connections = $appStore.connections;
@@ -38,6 +44,8 @@
   function openNewConnectionForm() {
     isEditing = false;
     showForm = true;
+    connectionMode = 'form';
+    showAdvancedOptions = false;
     currentConnection = {
       name: '',
       db_type: 'sqlite',
@@ -47,7 +55,11 @@
       database_name: '',
       username: '',
       password: '',
-      environment: 'development'
+      connection_string: '',
+      environment: 'development',
+      timeout_seconds: 30,
+      charset: 'utf8mb4',
+      max_connections: 10
     };
     currentConnectionId = null;
     testStatus = null;
@@ -56,16 +68,23 @@
   function openEditConnectionForm(connection: DatabaseConnection) {
     isEditing = true;
     showForm = true;
+    // 判断是否有connection_string，如果有则使用URL模式
+    connectionMode = connection.connection_string ? 'url' : 'form';
+    showAdvancedOptions = false;
     currentConnection = {
       name: connection.name,
-      db_type: connection.db_type,
+      db_type: connection.db_type as "sqlite" | "mysql" | "postgresql" | "mongodb",
       file_path: connection.file_path || '',
       host: connection.host || '',
-      port: connection.port,
+      port: connection.port || undefined,
       database_name: connection.database_name || '',
       username: connection.username || '',
       password: '', // 密码不回显
-      environment: connection.environment || 'development'
+      connection_string: connection.connection_string || '',
+      environment: connection.environment || 'development',
+      timeout_seconds: 30,
+      charset: 'utf8mb4',
+      max_connections: 10
     };
     currentConnectionId = connection.id || null;
     testStatus = null;
@@ -86,12 +105,18 @@
         ...currentConnection,
         name: currentConnection.name.trim(),
         db_type: currentConnection.db_type as 'sqlite' | 'mysql' | 'postgresql' | 'mongodb',
-        file_path: (currentConnection.file_path || '').trim(),
-        host: (currentConnection.host || '').trim(),
+        file_path: (currentConnection.file_path || '').trim() || undefined,
+        host: (currentConnection.host || '').trim() || undefined,
         port: currentConnection.port || (currentConnection.db_type === 'mongodb' ? 27017 : 3306),
-        database_name: (currentConnection.database_name || '').trim(),
-        username: (currentConnection.username || '').trim(),
-        password: (currentConnection.password || '').trim()
+        database_name: (currentConnection.database_name || '').trim() || undefined,
+        username: (currentConnection.username || '').trim() || undefined,
+        password: (currentConnection.password || '').trim() || undefined,
+        connection_string: (currentConnection.connection_string || '').trim() || undefined,
+        environment: currentConnection.environment,
+        // 高级配置选项（如果设置了的话）
+        timeout_seconds: currentConnection.timeout_seconds,
+        charset: currentConnection.charset,
+        max_connections: currentConnection.max_connections
       };
       
       if (isEditing && currentConnectionId) {
@@ -121,21 +146,41 @@
     if (!currentConnection) return;
     testStatus = null;
     try {
-      const response = await testConnection({
+      const testRequest: ConnectionTestRequest = {
         db_type: currentConnection.db_type.trim() as 'sqlite' | 'mysql' | 'postgresql' | 'mongodb',
         file_path: (currentConnection.file_path || '').trim(),
         host: (currentConnection.host || '').trim(),
         port: currentConnection.port || (currentConnection.db_type === 'mongodb' ? 27017 : 3306),
         database_name: (currentConnection.database_name || '').trim(),
         username: (currentConnection.username || '').trim(),
-        password: (currentConnection.password || '').trim()
-      });
+        password: (currentConnection.password || '').trim(),
+        connection_string: (currentConnection.connection_string || '').trim() || undefined,
+        environment: currentConnection.environment
+      };
+      
+      const response = await testConnection(testRequest);
       testStatus = response;
     } catch (error) {
       testStatus = {
         success: false,
         message: error instanceof Error ? error.message : '测试连接失败',
       };
+    }
+  }
+
+  /**
+   * 获取连接URL的占位符示例
+   */
+  function getUrlPlaceholder(): string {
+    switch (currentConnection?.db_type) {
+      case 'mysql':
+        return 'mysql://username:password@host:3306/database_name?charset=utf8mb4';
+      case 'postgresql':
+        return 'postgresql://username:password@host:5432/database_name';
+      case 'mongodb':
+        return 'mongodb://username:password@host:27017/database_name';
+      default:
+        return '输入连接URL...';
     }
   }
 
@@ -272,12 +317,51 @@
             </select>
           </div>
 
+          <!-- 连接方式选择 -->
+          {#if currentConnection.db_type !== 'sqlite'}
+            <div>
+              <div class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">连接方式</div>
+              <div class="flex gap-4">
+                <label class="flex items-center">
+                  <input type="radio" bind:group={connectionMode} value="form" class="mr-2" />
+                  <span>表单输入</span>
+                </label>
+                <label class="flex items-center">
+                  <input type="radio" bind:group={connectionMode} value="url" class="mr-2" />
+                  <span>手动输入URL</span>
+                </label>
+              </div>
+            </div>
+          {/if}
+
+          <!-- URL输入模式 -->
+          {#if connectionMode === 'url' && currentConnection.db_type !== 'sqlite'}
+            <div>
+              <label for="conn-url" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                连接URL
+                <span class="text-xs text-gray-500 ml-2">(例如: mysql://user:pass@host:port/dbname)</span>
+              </label>
+              <input
+                id="conn-url"
+                type="text"
+                bind:value={currentConnection.connection_string}
+                placeholder={getUrlPlaceholder()}
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm dark:bg-gray-700 dark:text-white font-mono text-xs"
+              />
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                💡 提示：使用连接URL时，表单中的其他连接信息将被忽略
+              </p>
+            </div>
+          {:else}
+            <!-- 表单输入模式 -->
+          {/if}
+
           {#if currentConnection.db_type === 'sqlite'}
             <div>
               <label for="conn-file-path" class="block text-sm font-medium text-gray-700 dark:text-gray-300">文件路径</label>
               <input id="conn-file-path" type="text" bind:value={currentConnection.file_path} placeholder=":memory: 或 /path/to/db.sqlite" class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm dark:bg-gray-700 dark:text-white">
             </div>
-          {:else}
+          {:else if connectionMode === 'form'}
             <div>
               <label for="conn-host" class="block text-sm font-medium text-gray-700 dark:text-gray-300">主机</label>
               <input id="conn-host" type="text" bind:value={currentConnection.host} class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm dark:bg-gray-700 dark:text-white">
@@ -299,6 +383,69 @@
               <input id="conn-password" type="password" bind:value={currentConnection.password} class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm dark:bg-gray-700 dark:text-white">
             </div>
           {/if}
+
+          <!-- 高级配置选项 -->
+          <div>
+            <button
+              type="button"
+              on:click={() => showAdvancedOptions = !showAdvancedOptions}
+              class="text-sm text-blue-600 dark:text-blue-400 hover:underline flex items-center"
+            >
+              {showAdvancedOptions ? '▼' : '▶'} 高级配置选项
+            </button>
+            
+            {#if showAdvancedOptions}
+              <div class="mt-3 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-md space-y-3 border border-gray-200 dark:border-gray-700">
+                <div>
+                  <label for="conn-timeout" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    连接超时（秒）
+                  </label>
+                  <input
+                    id="conn-timeout"
+                    type="number"
+                    bind:value={currentConnection.timeout_seconds}
+                    min="1"
+                    max="300"
+                    class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm dark:bg-gray-700 dark:text-white"
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">默认: 30秒</p>
+                </div>
+
+                <div>
+                  <label for="conn-charset" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    字符集
+                  </label>
+                  <select
+                    id="conn-charset"
+                    bind:value={currentConnection.charset}
+                    class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm dark:bg-gray-700 dark:text-white"
+                  >
+                    <option value="utf8mb4">UTF-8 (utf8mb4)</option>
+                    <option value="utf8">UTF-8 (utf8)</option>
+                    <option value="latin1">Latin1</option>
+                    <option value="gbk">GBK</option>
+                    <option value="gb2312">GB2312</option>
+                  </select>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">默认: utf8mb4</p>
+                </div>
+
+                <div>
+                  <label for="conn-max-connections" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    最大连接数
+                  </label>
+                  <input
+                    id="conn-max-connections"
+                    type="number"
+                    bind:value={currentConnection.max_connections}
+                    min="1"
+                    max="100"
+                    class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm dark:bg-gray-700 dark:text-white"
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">默认: 10</p>
+                </div>
+              </div>
+            {/if}
+          </div>
 
           {#if testStatus}
             <div class="p-3 rounded-md {testStatus.success ? 'bg-green-100 dark:bg-green-900/30' : 'bg-red-100 dark:bg-red-900/30'}">
@@ -325,3 +472,5 @@
 <style>
   /* 添加一些样式以确保组件有默认导出 */
 </style>
+
+

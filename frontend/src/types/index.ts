@@ -112,7 +112,12 @@ export interface ConnectionRequest {
   username?: string;
   password?: string;
   file_path?: string;
+  connection_string?: string; // 手动输入的连接URL
   environment?: string; // 环境标签
+  // 高级配置选项（可选，用于扩展）
+  timeout_seconds?: number; // 连接超时（秒）
+  charset?: string; // 字符集
+  max_connections?: number; // 最大连接数
 }
 
 // 连接测试请求
@@ -124,6 +129,7 @@ export interface ConnectionTestRequest {
   username?: string;
   password?: string;
   file_path?: string;
+  connection_string?: string; // 手动输入的连接URL
   environment?: string; // 环境标签
 }
 
@@ -230,4 +236,49 @@ export interface QueryHistoryItem {
   favorite?: boolean;
   rowCount?: number;
   result?: SqlQueryResult;
+}
+
+// 批量插入请求
+export interface BulkInsertRequest {
+  table_name: string;
+  rows: Record<string, any>[];
+  connection_id?: number;
+}
+
+// 批量插入响应
+export interface BulkInsertResponse {
+  success: boolean;
+  inserted: number;
+  failed: number;
+  message: string;
+  errors?: string[];
+}
+
+// 批量更新请求
+export interface BulkUpdateRequest {
+  table_name: string;
+  updates: Record<string, any>[];
+  where_clause?: string;
+  connection_id?: number;
+}
+
+// 批量更新响应
+export interface BulkUpdateResponse {
+  success: boolean;
+  updated: number;
+  message: string;
+}
+
+// 批量删除请求
+export interface BulkDeleteRequest {
+  table_name: string;
+  where_clause: string;
+  connection_id?: number;
+}
+
+// 批量删除响应
+export interface BulkDeleteResponse {
+  success: boolean;
+  deleted: number;
+  message: string;
 }
